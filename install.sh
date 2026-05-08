@@ -1,19 +1,28 @@
 #!/usr/bin/env bash
 # Install summarize-context into ~/.claude.
 #
-# - Symlinks ~/.claude/skills/conversation-summary -> <this repo>
-#   so the repo is the single source of truth.
-# - Idempotently merges a SessionEnd hook into ~/.claude/settings.json
-#   that runs scripts/write_summary.sh on session close.
+# - Symlinks ~/.claude/skills/conversation-summary -> <repo>/conversation-summary
+# - Symlinks ~/.claude/skills/load-context         -> <repo>/load-context
+# - Idempotently merges two hooks into ~/.claude/settings.json:
+#     SessionEnd   -> conversation-summary/scripts/write_summary.sh
+#     SessionStart -> load-context/scripts/load_context_hook.sh
 #
 # Re-running this script is safe.
+#
+# DEBUG=true ./install.sh    # verbose logging
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${HOME}/.claude"
-SKILL_LINK="${CLAUDE_DIR}/skills/conversation-summary"
+SKILLS_DIR="${CLAUDE_DIR}/skills"
 SETTINGS="${CLAUDE_DIR}/settings.json"
+
+debug() {
+  if [[ "${DEBUG:-}" == "true" ]]; then
+    echo "[install] $*" >&2
+  fi
+}
 
 for tool in jq python3 claude; do
   command -v "${tool}" >/dev/null 2>&1 || {
@@ -22,7 +31,7 @@ for tool in jq python3 claude; do
   }
 done
 
-mkdir -p "${CLAUDE_DIR}/skills"
+mkdir -p "${SKILLS_DIR}"
 
 link_target() {
   local link="$1" target="$2"
@@ -33,6 +42,7 @@ link_target() {
       echo "  already linked: ${link}"
       return
     fi
+    debug "removing stale symlink ${link} -> ${current}"
     rm "${link}"
   elif [[ -e "${link}" ]]; then
     local bak
@@ -44,10 +54,11 @@ link_target() {
   echo "  linked: ${link} -> ${target}"
 }
 
-echo "Installing symlink..."
-link_target "${SKILL_LINK}" "${REPO}"
+echo "Installing symlinks..."
+link_target "${SKILLS_DIR}/conversation-summary" "${REPO}/conversation-summary"
+link_target "${SKILLS_DIR}/load-context"         "${REPO}/load-context"
 
-echo "Merging hook into ${SETTINGS}..."
+echo "Merging hooks into ${SETTINGS}..."
 python3 - "${SETTINGS}" <<'PY'
 import json
 import sys
@@ -57,40 +68,54 @@ settings_path = Path(sys.argv[1])
 data = json.loads(settings_path.read_text()) if settings_path.exists() else {}
 hooks = data.setdefault("hooks", {})
 
-CMD = "bash $HOME/.claude/skills/conversation-summary/scripts/write_summary.sh"
-TIMEOUT = 10
-EVENT = "SessionEnd"
-MARKER = "conversation-summary/scripts/write_summary.sh"
+ENTRIES = [
+    {
+        "event": "SessionEnd",
+        "marker": "conversation-summary/scripts/write_summary.sh",
+        "command": "bash $HOME/.claude/skills/conversation-summary/scripts/write_summary.sh",
+        "timeout": 10,
+    },
+    {
+        "event": "SessionStart",
+        "marker": "load-context/scripts/load_context_hook.sh",
+        "command": "bash $HOME/.claude/skills/load-context/scripts/load_context_hook.sh",
+        "timeout": 10,
+    },
+]
 
-arr = hooks.setdefault(EVENT, [])
-found = False
-for group in arr:
-    for h in group.get("hooks", []):
-        if MARKER in h.get("command", ""):
-            h["command"] = CMD
-            h["type"] = "command"
-            h["timeout"] = TIMEOUT
-            found = True
+for spec in ENTRIES:
+    arr = hooks.setdefault(spec["event"], [])
+    found = False
+    for group in arr:
+        for h in group.get("hooks", []):
+            if spec["marker"] in h.get("command", ""):
+                h["type"] = "command"
+                h["command"] = spec["command"]
+                h["timeout"] = spec["timeout"]
+                found = True
+                break
+        if found:
             break
-    if found:
-        break
 
-if found:
-    print(f"  [{EVENT}] hook already present (normalized)")
-else:
-    arr.append({
-        "hooks": [{
-            "type": "command",
-            "command": CMD,
-            "timeout": TIMEOUT,
-        }],
-    })
-    print(f"  [{EVENT}] hook added")
+    if found:
+        print(f"  [{spec['event']}] hook already present (normalized)")
+    else:
+        arr.append({
+            "hooks": [{
+                "type": "command",
+                "command": spec["command"],
+                "timeout": spec["timeout"],
+            }],
+        })
+        print(f"  [{spec['event']}] hook added")
 
 settings_path.parent.mkdir(parents=True, exist_ok=True)
 settings_path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
 echo
-echo "Done. Restart Claude Code (or open /hooks once) to pick up the hook."
-echo "summary.json will be written to the session's CWD when the next session ends."
+echo "Done. Restart Claude Code (or open /hooks once) so the watcher picks up the changes."
+echo
+echo "Round-trip:"
+echo "  - SessionEnd writes <cwd>/.context-handoff.json"
+echo "  - SessionStart in the same dir auto-injects it on the next session"

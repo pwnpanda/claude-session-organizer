@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # SessionEnd hook: spawn a headless `claude --print --bare` against the
-# transcript and write a structured summary.json into the session CWD.
+# transcript and write a structured .context-handoff.json into the
+# session CWD. The companion load-context skill (and its SessionStart
+# hook) ingests this file when a fresh session starts in the same dir.
 #
 # `--bare` is critical here: it skips hooks in the child, preventing this
 # very hook from re-triggering recursively when the child exits.
@@ -29,7 +31,7 @@ if [[ "$TRANSCRIPT_LINES" -lt 4 ]]; then
   exit 0
 fi
 
-OUT="$CWD/summary.json"
+OUT="$CWD/.context-handoff.json"
 SKILL_BODY=$(cat "$SKILL_DIR/SKILL.md" 2>/dev/null || true)
 if [[ -z "$SKILL_BODY" ]]; then
   exit 0

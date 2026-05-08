@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 # Uninstall summarize-context from ~/.claude.
 #
-# - Removes the symlink ~/.claude/skills/conversation-summary if it
-#   still points at this repo.
-# - Removes the SessionEnd hook entry from ~/.claude/settings.json.
+# - Removes symlinks at ~/.claude/skills/conversation-summary and
+#   ~/.claude/skills/load-context if they still point at this repo.
+# - Removes the SessionEnd and SessionStart hook entries from
+#   ~/.claude/settings.json.
 #
-# Leaves any summary.json files in working directories alone, and
-# leaves backups (.bak.*) intact.
+# Leaves any .context-handoff.json files in working directories alone,
+# and leaves backups (.bak.*) intact.
 
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLAUDE_DIR="${HOME}/.claude"
-SKILL_LINK="${CLAUDE_DIR}/skills/conversation-summary"
+SKILLS_DIR="${CLAUDE_DIR}/skills"
 SETTINGS="${CLAUDE_DIR}/settings.json"
 
 remove_link_if_ours() {
@@ -35,11 +36,12 @@ remove_link_if_ours() {
   echo "  not present: ${link}"
 }
 
-echo "Removing symlink..."
-remove_link_if_ours "${SKILL_LINK}" "${REPO}"
+echo "Removing symlinks..."
+remove_link_if_ours "${SKILLS_DIR}/conversation-summary" "${REPO}/conversation-summary"
+remove_link_if_ours "${SKILLS_DIR}/load-context"         "${REPO}/load-context"
 
 if [[ -f "${SETTINGS}" ]]; then
-  echo "Removing hook from ${SETTINGS}..."
+  echo "Removing hooks from ${SETTINGS}..."
   python3 - "${SETTINGS}" <<'PY'
 import json
 import sys
@@ -49,16 +51,21 @@ settings_path = Path(sys.argv[1])
 data = json.loads(settings_path.read_text())
 hooks = data.get("hooks", {})
 
-MARKER = "conversation-summary/scripts/write_summary.sh"
-removed = 0
+REMOVALS = [
+    ("SessionEnd",   "conversation-summary/scripts/write_summary.sh"),
+    ("SessionStart", "load-context/scripts/load_context_hook.sh"),
+]
 
-arr = hooks.get("SessionEnd")
-if arr:
+removed = 0
+for event, marker in REMOVALS:
+    arr = hooks.get(event)
+    if not arr:
+        continue
     new_arr = []
     for group in arr:
         kept = [
             h for h in group.get("hooks", [])
-            if MARKER not in h.get("command", "")
+            if marker not in h.get("command", "")
         ]
         diff = len(group.get("hooks", [])) - len(kept)
         removed += diff
@@ -67,9 +74,9 @@ if arr:
             new_group["hooks"] = kept
             new_arr.append(new_group)
     if new_arr:
-        hooks["SessionEnd"] = new_arr
+        hooks[event] = new_arr
     else:
-        hooks.pop("SessionEnd", None)
+        hooks.pop(event, None)
 
 if not hooks:
     data.pop("hooks", None)
@@ -80,4 +87,4 @@ PY
 fi
 
 echo
-echo "Done. Existing summary.json files in working directories were left alone."
+echo "Done. Existing .context-handoff.json files in working directories were left alone."
