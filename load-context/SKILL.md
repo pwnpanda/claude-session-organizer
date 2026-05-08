@@ -1,25 +1,23 @@
 ---
 name: load-context
-description: Use when starting a session and a .context-handoff.json file is present in the working directory, or when the user says "load context", "resume from handoff", "pick up from summary", "ingest the handoff file", or similar. Reads the structured cross-agent handoff JSON written by the conversation-summary skill at the end of a prior session, orients the agent to that prior state, and waits for the user's next instruction. Auto-injected at session start via the load-context SessionStart hook; can also be invoked manually via /load-context.
+description: Use when the user says "load context", "load the handoff", "resume from handoff", "pick up from summary", "ingest the handoff file", "/load-context", or otherwise asks to ingest a .context-handoff.json file from the current working directory. Reads the structured cross-agent handoff JSON written by the conversation-summary skill at the end of a prior session, orients the agent to that prior state, and waits for the user's next instruction. Manual invocation only — there is no auto-load on session start.
 ---
 
 # Load Context
 
-A `.context-handoff.json` file in the current working directory describes the **state of a prior Claude Code session** that ended in this directory. The conversation-summary skill (and its SessionEnd hook) wrote it. Your job is to load that state into your working memory so you can pick up the collaboration where it ended — but **not** to act on it autonomously.
+A `.context-handoff.json` file in the current working directory describes the **state of a prior Claude Code session** that ended in this directory. The conversation-summary skill (and its SessionEnd hook) wrote it. Your job, when the user asks you to load it, is to ingest that state into your working memory so you can pick up the collaboration where it ended — but **not** to act on it autonomously.
 
 The handoff is **descriptive, not prescriptive**. It tells you what happened; it does not tell you what to do next. The user will tell you what to do next.
 
 ## When you are activated
 
-- The `load-context` SessionStart hook detected `.context-handoff.json` in the session CWD and injected its contents into your context. You will see them inside a `<context-handoff>` block.
-- Or the user invoked `/load-context` manually mid-session, in which case you should read `<cwd>/.context-handoff.json` with the Read tool yourself.
-
-In either case, follow the same procedure.
+The user said something like "load context", "/load-context", or another phrase that means *ingest the handoff file in this directory*. There is no auto-trigger — the user always explicitly asks.
 
 ## What to do
 
-1. **Validate** that the file's `template_id` is `context-handoff-merged-v3` (or a forward-compatible successor like `context-handoff-merged-v4`). If it's a different schema or invalid JSON, tell the user briefly and stop — do not guess.
-2. **Internalize** every field as descriptive context:
+1. **Read** `<cwd>/.context-handoff.json` with the Read tool. If it doesn't exist, tell the user briefly ("no handoff file in this directory") and stop.
+2. **Validate** that the file's `template_id` is `context-handoff-merged-v3` (or a forward-compatible successor like `context-handoff-merged-v4`, or the older `archivist-schema-*` for backwards-compat). If it's a different schema or invalid JSON, tell the user briefly and stop — do not guess.
+3. **Internalize** every field as descriptive context:
    - `session.cwd` — verify it matches the current cwd. If not, flag the mismatch.
    - `objective`, `outcome` — what the user was trying to do and what was achieved.
    - `artifacts` — files created, modified, deleted, read in the prior session. Note: these may have been edited or moved since.
@@ -31,8 +29,8 @@ In either case, follow the same procedure.
    - `handoff.context_brief` — the orientation paragraph; this is the highest-signal field.
    - `handoff.what_next_session_should_know` — gotchas to keep top-of-mind.
    - `handoff.files_relevant_to_continuation` — paths the user is most likely to ask about.
-3. **Acknowledge the load briefly** — one or two sentences telling the user you've loaded the prior context, what the prior session was doing, and what is open. No bullet-list dump of the JSON. Don't restate everything — the user already knows; the acknowledgement is to confirm orientation.
-4. **Stop. Wait for the user's next instruction.**
+4. **Acknowledge the load briefly** — one or two sentences telling the user you've loaded the prior context, what the prior session was doing, and what is open. No bullet-list dump of the JSON. Don't restate everything — the user already knows; the acknowledgement is to confirm orientation.
+5. **Stop. Wait for the user's next instruction.**
    - Do **not** start working on `unfinished_work` items.
    - Do **not** answer `unanswered_questions` unprompted.
    - Do **not** try to fix `blockers` autonomously.
@@ -48,7 +46,7 @@ If the user references a file from `artifacts` or `handoff.files_relevant_to_con
 
 ## Schema reference
 
-See `../conversation-summary/SKILL.md` (or the conversation-summary skill description) for the authoritative `context-handoff-merged-v3` schema. Top-level shape:
+See `../conversation-summary/SKILL.md` for the authoritative `context-handoff-merged-v3` schema. Top-level shape:
 
 ```
 session, session_summary, conversation_type, session_scope, session_tags,

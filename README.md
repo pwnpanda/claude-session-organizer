@@ -4,8 +4,8 @@ Two paired Claude Code skills + hooks that round-trip session context across ses
 
 ## What this does
 
-- **At session end:** the `conversation-summary` skill (driven by a `SessionEnd` hook) reads the Claude Code transcript, spawns a headless `claude --print --bare` child to compress it into a structured snapshot, and atomically writes `.context-handoff.json` to the session's working directory.
-- **At session start:** the `load-context` skill (driven by a `SessionStart` hook) detects `.context-handoff.json` in the working directory, validates its schema, and injects its contents into the new session's context. The agent acknowledges the load and then waits for the user — the handoff is descriptive context, not an action queue.
+- **At session end (automatic):** the `conversation-summary` skill (driven by a `SessionEnd` hook) reads the Claude Code transcript, spawns a headless `claude --print --bare` child to compress it into a structured snapshot, and atomically writes `.context-handoff.json` to the session's working directory.
+- **In a new session (manual):** invoke `/load-context` (or say "load context", "load the handoff", etc.). The `load-context` skill reads `.context-handoff.json` from the current working directory, validates the schema, and orients to the prior state. The agent acknowledges the load and then waits — the handoff is descriptive context, not an action queue. Loading is **always explicit** — there is no auto-load on session start.
 
 The JSON conforms to the `context-handoff-merged-v3` schema, designed to be portable across providers: any model that can read the JSON can orient itself to the prior session's state without having seen the original transcript.
 
@@ -36,7 +36,8 @@ cd ~/git/Private/summarize-context
 
 - Symlinks `~/.claude/skills/conversation-summary` → `<repo>/conversation-summary`.
 - Symlinks `~/.claude/skills/load-context` → `<repo>/load-context`.
-- Merges a `SessionEnd` hook (writer) and `SessionStart` hook (loader) into `~/.claude/settings.json`. Existing hooks are preserved.
+- Merges a `SessionEnd` hook (writer) into `~/.claude/settings.json`. Existing hooks are preserved.
+- Purges any legacy `SessionStart` hook entry left over from a previous version that auto-loaded the handoff.
 
 After install, restart Claude Code (or open `/hooks` once) so the file watcher picks up the new hooks.
 
@@ -50,42 +51,39 @@ Removes the two symlinks (only if they still point at this repo) and removes the
 
 ## Usage
 
-### Automatic (the common case)
+### Typical round-trip
 
 1. Work in Claude Code as normal in some project directory.
 2. Exit the session (`/quit`, `Ctrl+C`, etc.).
 3. The `SessionEnd` hook fires asynchronously and writes `<project-dir>/.context-handoff.json`.
 4. Start a new Claude Code session in the same directory.
-5. The `SessionStart` hook detects the file and injects its contents. The agent acknowledges briefly: "Loaded prior session context; the previous session was working on X, with Y unresolved."
-6. You give your next instruction. The agent now has the prior context loaded.
+5. Tell Claude to load the context: `/load-context` or "load the handoff" — it reads the file, validates the schema, and acknowledges briefly ("Loaded prior session context; the previous session was working on X, with Y unresolved.").
+6. You give your next instruction. The agent now has the prior context loaded and waits for direction.
 
-### Manual
+### Other modes
 
-- Mid-session checkpoint: invoke `/conversation-summary` to produce a fresh `.context-handoff.json` without ending the session.
-- Manual reload: invoke `/load-context` to re-read `.context-handoff.json` from the current cwd (useful if you edited it, or if you started a session in a different cwd than the file lives in).
-- Cross-provider: copy `.context-handoff.json` into a new directory, paste its contents into another LLM's chat with the instruction "load this prior-session context", and continue.
+- **Mid-session checkpoint:** invoke `/conversation-summary` to produce a fresh `.context-handoff.json` without ending the session.
+- **Cross-provider:** copy `.context-handoff.json` into a new directory, paste its contents into another LLM's chat with the instruction "load this prior-session context", and continue.
 
 ### Debugging
 
 ```bash
-DEBUG=true bash ~/git/Private/summarize-context/load-context/scripts/load_context_hook.sh < /dev/null
 tail -f ~/.claude/skills/conversation-summary/last-run.log
 ```
 
-The log records both writer and loader runs.
+The log records writer runs (success, failure, skipped trivial sessions). Loading happens entirely inside the model on `/load-context` — no shell-side log.
 
 ## Testing
 
 No automated tests — this is a small set of shell scripts wired to Claude Code lifecycle hooks. Verification is manual:
 
 - **Pipe test the writer** with a synthetic SessionEnd payload and a stub `claude` binary; check that `.context-handoff.json` lands in the target dir and is valid JSON.
-- **Pipe test the loader** with a synthetic SessionStart payload pointing at a CWD that contains a sample `.context-handoff.json`; check that stdout is a valid JSON object containing `hookSpecificOutput.additionalContext`.
-- **End-to-end:** run a real Claude Code session, exit, restart in the same dir, observe the systemMessage announcing the load and the agent's acknowledgement.
+- **End-to-end:** run a real Claude Code session, exit, restart in the same dir, ask Claude to `/load-context`, and verify it reads the file and acknowledges the prior state without auto-acting.
 
 `shellcheck` runs cleanly on every script in this repo. Run it before committing:
 
 ```bash
-shellcheck conversation-summary/scripts/*.sh load-context/scripts/*.sh install.sh uninstall.sh
+shellcheck conversation-summary/scripts/*.sh install.sh uninstall.sh
 ```
 
 ## Deployment
@@ -103,16 +101,15 @@ To deploy to another machine: clone the repo and run `install.sh`. No daemons, n
 - `conversation-summary` skill with the `context-handoff-merged-v3` JSON schema.
 - `SessionEnd` hook that writes `.context-handoff.json` via headless `claude --print --bare` (the `--bare` flag prevents recursive hook spawning in the child).
 - Atomic writes (`.tmp` + `jq` validation + rename); skips trivial sessions (<4 transcript lines); cost capped at `$1/run`.
-- `load-context` skill that interprets the schema and waits for user instruction (descriptive load, not action queue).
-- `SessionStart` hook that detects `.context-handoff.json` in the session CWD, validates `template_id` (accepts `context-handoff-*` and `archivist-schema-*` for backwards-compat), and injects via `hookSpecificOutput.additionalContext`.
-- Idempotent `install.sh` / `uninstall.sh` that manage symlinks and merge/unmerge hook entries without disturbing unrelated entries.
+- `load-context` skill (manual invocation only via `/load-context` or natural language) that reads `.context-handoff.json` from CWD, validates the schema (accepts `context-handoff-*` and `archivist-schema-*` for backwards-compat), and orients without auto-acting.
+- Idempotent `install.sh` / `uninstall.sh` that manage symlinks and merge/unmerge hook entries without disturbing unrelated entries; install.sh also purges legacy `SessionStart` auto-load entries from older versions.
 - Logs to `~/.claude/skills/conversation-summary/last-run.log` (gitignored).
 
 ## Planned features
 
 - Walk up from CWD to find `.context-handoff.json` in a parent project root (currently only checks the exact CWD).
 - Optional `--max-budget-usd` override via env var instead of hardcoded `$1`.
-- Schema migration helper for moving older `archivist-schema-v2-resilient` files forward.
+- Schema migration helper for moving older `archivist-schema-v2-resilient` files forward to `context-handoff-merged-v3`.
 
 ## File layout
 
@@ -123,9 +120,7 @@ To deploy to another machine: clone the repo and run `install.sh`. No daemons, n
 │   └── scripts/
 │       └── write_summary.sh           # SessionEnd hook command
 ├── load-context/
-│   ├── SKILL.md                       # Read-side interpretation guide
-│   └── scripts/
-│       └── load_context_hook.sh       # SessionStart hook command
+│   └── SKILL.md                       # Read-side interpretation guide (manual /load-context)
 ├── install.sh                         # Symlink + settings.json merge
 ├── uninstall.sh                       # Reverse of install
 ├── README.md
@@ -137,6 +132,7 @@ To deploy to another machine: clone the repo and run `install.sh`. No daemons, n
 - **`--bare` is critical for the writer.** Without it, the child `claude` would inherit the same `SessionEnd` hook and recurse. `--bare` skips hooks in the child.
 - **Async + disowned writer.** The writer backgrounds + `disown`s its `claude` invocation so it survives the parent session's exit.
 - **Standardized filename.** `.context-handoff.json` (hidden, schema-named) avoids collisions with project files and binds to the schema's identity.
-- **Schema gating on load.** The loader only injects files whose `template_id` matches a known prefix. Unknown templates are logged and skipped, not crashed on.
-- **Descriptive, not prescriptive.** The schema and the load-context skill both make this explicit: the loader tells the agent to *acknowledge and wait*, not to start working on `unfinished_work` items.
+- **Schema gating on load.** The loader (the model under `/load-context`) only ingests files whose `template_id` matches a known prefix. Unknown templates are flagged to the user and skipped.
+- **Manual-only load.** Earlier iterations auto-injected the handoff via a `SessionStart` hook; that was removed in favor of explicit user invocation. Loading is now always opt-in per session.
+- **Descriptive, not prescriptive.** The schema and the load-context skill both make this explicit: after `/load-context`, the agent acknowledges and waits, never starts working on `unfinished_work` items.
 - **Atomic writes with validation.** A failed `claude` invocation leaves no partial file; the writer only renames `.tmp` → final after `jq` confirms valid JSON.
