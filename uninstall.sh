@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Uninstall summarize-context from ~/.claude.
+# Uninstall the three session skills from ~/.claude.
 #
-# - Removes symlinks at ~/.claude/skills/conversation-summary and
-#   ~/.claude/skills/load-context if they still point at this repo.
-# - Removes the SessionEnd and SessionStart hook entries from
-#   ~/.claude/settings.json.
+# - Removes symlinks at ~/.claude/skills/{conversation-summary,load-context,resume-session}
+#   and ~/.claude/commands/save.md if they still point at this repo.
+# - Removes the SessionEnd, SessionStart, and UserPromptSubmit hook entries
+#   added by this repo's install.sh from ~/.claude/settings.json.
 #
 # Leaves any .context-handoff.json files in working directories alone,
-# and leaves backups (.bak.*) intact.
+# leaves backups (.bak.*) intact, and leaves the session-name registry at
+# ~/.claude/session-names/ alone.
 
 set -euo pipefail
 
@@ -39,6 +40,8 @@ remove_link_if_ours() {
 echo "Removing symlinks..."
 remove_link_if_ours "${SKILLS_DIR}/conversation-summary" "${REPO}/conversation-summary"
 remove_link_if_ours "${SKILLS_DIR}/load-context"         "${REPO}/load-context"
+remove_link_if_ours "${SKILLS_DIR}/resume-session"       "${REPO}/resume-session"
+remove_link_if_ours "${CLAUDE_DIR}/commands/save.md"     "${REPO}/resume-session/commands/save.md"
 
 if [[ -f "${SETTINGS}" ]]; then
   echo "Removing hooks from ${SETTINGS}..."
@@ -52,8 +55,10 @@ data = json.loads(settings_path.read_text())
 hooks = data.get("hooks", {})
 
 REMOVALS = [
-    ("SessionEnd",   "conversation-summary/scripts/write_summary.sh"),
-    ("SessionStart", "load-context/scripts/load_context_hook.sh"),
+    ("SessionEnd",       "conversation-summary/scripts/write_summary.sh"),
+    ("SessionEnd",       "resume-session/scripts/session_end_hook.py"),
+    ("UserPromptSubmit", "resume-session/scripts/rename_hook.py"),
+    ("SessionStart",     "load-context/scripts/load_context_hook.sh"),
 ]
 
 removed = 0

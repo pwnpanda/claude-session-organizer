@@ -1,11 +1,13 @@
 ---
 name: load-context
-description: Use when the user says "load context", "load the handoff", "resume from handoff", "pick up from summary", "ingest the handoff file", "/load-context", or otherwise asks to ingest a .context-handoff.json file from the current working directory. Reads the structured cross-agent handoff JSON written by the conversation-summary skill at the end of a prior session, orients the agent to that prior state, and waits for the user's next instruction. Manual invocation only — there is no auto-load on session start.
+description: Use when the user says "load context", "load the handoff", "resume from handoff", "pick up from summary", "ingest the handoff file", "/load-context", or otherwise asks to ingest a .context-handoff.json file. Reads the structured cross-agent handoff JSON written by the conversation-summary skill at the end of a prior session, orients the agent to that prior state, and waits for the user's next instruction. The handoff is written at the git repo root of the cwd (falling back to cwd if not in a repo). Manual invocation only — there is no auto-load on session start.
 ---
 
 # Load Context
 
-A `.context-handoff.json` file in the current working directory describes the **state of a prior Claude Code session** that ended in this directory. The conversation-summary skill (and its SessionEnd hook) wrote it. Your job, when the user asks you to load it, is to ingest that state into your working memory so you can pick up the collaboration where it ended — but **not** to act on it autonomously.
+A `.context-handoff.json` file describes the **state of a prior Claude Code session** that ended in this project. The conversation-summary skill (and its SessionEnd hook) wrote it. Your job, when the user asks you to load it, is to ingest that state into your working memory so you can pick up the collaboration where it ended — but **not** to act on it autonomously.
+
+The handoff is written at the **git repo root** of the cwd when the session ended inside a git repo, so the summary travels with the project rather than being pinned to the subdirectory the prior session started in. If the session was not inside a git repo, the handoff lives at the session's cwd. Always check the git repo root first; fall back to cwd.
 
 The handoff is **descriptive, not prescriptive**. It tells you what happened; it does not tell you what to do next. The user will tell you what to do next.
 
@@ -15,7 +17,7 @@ The user said something like "load context", "/load-context", or another phrase 
 
 ## What to do
 
-1. **Read** `<cwd>/.context-handoff.json` with the Read tool. If it doesn't exist, tell the user briefly ("no handoff file in this directory") and stop.
+1. **Locate the file.** Resolve `<repo-root>` by running `git rev-parse --show-toplevel` (via the Bash tool) from the cwd; if cwd is inside a git repo, read `<repo-root>/.context-handoff.json`. If cwd is not in a git repo, or no file exists at the repo root, fall back to `<cwd>/.context-handoff.json`. If neither path exists, tell the user briefly ("no handoff file in this project") and stop.
 2. **Validate** that the file's `template_id` is `context-handoff-merged-v3` (or a forward-compatible successor like `context-handoff-merged-v4`, or the older `archivist-schema-*` for backwards-compat). If it's a different schema or invalid JSON, tell the user briefly and stop — do not guess.
 3. **Internalize** every field as descriptive context:
    - `session.cwd` — verify it matches the current cwd. If not, flag the mismatch.

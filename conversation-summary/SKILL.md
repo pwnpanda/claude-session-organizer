@@ -1,6 +1,6 @@
 ---
 name: conversation-summary
-description: Use when generating a structured JSON snapshot of a Claude Code conversation for cross-LLM and cross-agent context handoff. Produces a descriptive state-of-the-session document — not an instruction set — covering session metadata, objective, outcome, artifacts touched, decisions, errors, open threads, interaction dynamics (tone, drift), user signals, and a self-contained orientation brief. Invoked automatically by the SessionEnd hook to write .context-handoff.json into the session CWD; can also be invoked manually mid-session via /conversation-summary to capture state without ending the session. The output is a context load for a fresh agent to read at the start of a new session — never an action queue.
+description: Use when generating a structured JSON snapshot of a Claude Code conversation for cross-LLM and cross-agent context handoff. Produces a descriptive state-of-the-session document — not an instruction set — covering session metadata, objective, outcome, artifacts touched, decisions, errors, open threads, interaction dynamics (tone, drift), user signals, and a self-contained orientation brief. Invoked automatically by the SessionEnd hook to write .context-handoff.json at the git repo root of the cwd (falling back to cwd if not in a repo); can also be invoked manually mid-session via /conversation-summary to capture state without ending the session. The output is a context load for a fresh agent to read at the start of a new session — never an action queue.
 ---
 
 # Conversation Summary
@@ -157,4 +157,4 @@ Emit exactly one JSON object. **All fields are required** — use `null`, `""`, 
 
 ## Manual invocation
 
-When invoked via `/conversation-summary` mid-session (no `transcript_path` provided), summarize the conversation visible in your current context window using the same schema. Write the result to `<cwd>/.context-handoff.json` using the Write tool, or print it to the chat if no cwd is available.
+When invoked via `/conversation-summary` mid-session (no `transcript_path` provided), summarize the conversation visible in your current context window using the same schema. Write the result to `<repo-root>/.context-handoff.json` (resolve via `git rev-parse --show-toplevel` from the cwd) using the Write tool, falling back to `<cwd>/.context-handoff.json` if cwd is not inside a git repo. Print it to the chat if no cwd is available.

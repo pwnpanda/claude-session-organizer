@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Install summarize-context into ~/.claude.
+# Install the three session skills into ~/.claude.
 #
 # - Symlinks ~/.claude/skills/conversation-summary -> <repo>/conversation-summary
 # - Symlinks ~/.claude/skills/load-context         -> <repo>/load-context
-# - Idempotently merges one hook into ~/.claude/settings.json:
-#     SessionEnd -> conversation-summary/scripts/write_summary.sh
+# - Symlinks ~/.claude/skills/resume-session       -> <repo>/resume-session
+# - Symlinks ~/.claude/commands/save.md            -> <repo>/resume-session/commands/save.md
+# - Idempotently merges hooks into ~/.claude/settings.json:
+#     SessionEnd       -> conversation-summary/scripts/write_summary.sh
+#     SessionEnd       -> resume-session/scripts/session_end_hook.py
+#     UserPromptSubmit -> resume-session/scripts/rename_hook.py
 # - Cleans up any legacy SessionStart hook left over from earlier
 #   versions that auto-loaded the handoff. Loading is now manual-only
 #   via the /load-context skill.
@@ -33,7 +37,7 @@ for tool in jq python3 claude; do
   }
 done
 
-mkdir -p "${SKILLS_DIR}"
+mkdir -p "${SKILLS_DIR}" "${CLAUDE_DIR}/commands"
 
 link_target() {
   local link="$1" target="$2"
@@ -59,6 +63,8 @@ link_target() {
 echo "Installing symlinks..."
 link_target "${SKILLS_DIR}/conversation-summary" "${REPO}/conversation-summary"
 link_target "${SKILLS_DIR}/load-context"         "${REPO}/load-context"
+link_target "${SKILLS_DIR}/resume-session"       "${REPO}/resume-session"
+link_target "${CLAUDE_DIR}/commands/save.md"     "${REPO}/resume-session/commands/save.md"
 
 echo "Merging hooks into ${SETTINGS}..."
 python3 - "${SETTINGS}" <<'PY'
@@ -78,6 +84,16 @@ ENSURE = [
         "command": "bash $HOME/.claude/skills/conversation-summary/scripts/write_summary.sh",
         "timeout": 10,
     },
+    {
+        "event": "SessionEnd",
+        "marker": "resume-session/scripts/session_end_hook.py",
+        "command": "python3 $HOME/.claude/skills/resume-session/scripts/session_end_hook.py",
+    },
+    {
+        "event": "UserPromptSubmit",
+        "marker": "resume-session/scripts/rename_hook.py",
+        "command": "python3 $HOME/.claude/skills/resume-session/scripts/rename_hook.py",
+    },
 ]
 
 # Hooks to ensure are absent (cleanup of deprecated entries from older
@@ -94,7 +110,10 @@ for spec in ENSURE:
             if spec["marker"] in h.get("command", ""):
                 h["type"] = "command"
                 h["command"] = spec["command"]
-                h["timeout"] = spec["timeout"]
+                if "timeout" in spec:
+                    h["timeout"] = spec["timeout"]
+                else:
+                    h.pop("timeout", None)
                 found = True
                 break
         if found:
@@ -103,13 +122,10 @@ for spec in ENSURE:
     if found:
         print(f"  [{spec['event']}] hook already present (normalized)")
     else:
-        arr.append({
-            "hooks": [{
-                "type": "command",
-                "command": spec["command"],
-                "timeout": spec["timeout"],
-            }],
-        })
+        hook_entry = {"type": "command", "command": spec["command"]}
+        if "timeout" in spec:
+            hook_entry["timeout"] = spec["timeout"]
+        arr.append({"hooks": [hook_entry]})
         print(f"  [{spec['event']}] hook added")
 
 purged = 0
@@ -141,9 +157,22 @@ settings_path.parent.mkdir(parents=True, exist_ok=True)
 settings_path.write_text(json.dumps(data, indent=2) + "\n")
 PY
 
+SOURCE_LINE="source \"\$HOME/.claude/skills/resume-session/shell/cc-resume.sh\""
+echo
+echo "Optional: install the cc-resume shell function for one-shot restore by name."
+echo "  Add this line to your ~/.zshrc or ~/.bashrc:"
+echo "    ${SOURCE_LINE}"
+for rc in "${HOME}/.zshrc" "${HOME}/.bashrc"; do
+  [[ -f "${rc}" ]] || continue
+  if grep -Fq "skills/resume-session/shell/cc-resume.sh" "${rc}"; then
+    echo "  ${rc}: already sources cc-resume.sh"
+  fi
+done
+
 echo
 echo "Done. Restart Claude Code (or open /hooks once) so the watcher picks up the changes."
 echo
 echo "Round-trip:"
-echo "  - SessionEnd writes <cwd>/.context-handoff.json"
+echo "  - SessionEnd writes .context-handoff.json (at git repo root if available, else cwd)"
 echo "  - To load it in a new session, ask Claude to /load-context (manual only)"
+echo "  - /save my-session registers the current session under a human-friendly name"
