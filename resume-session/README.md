@@ -1,22 +1,29 @@
 # session-organizer
 
-Name and resume Claude Code sessions by human-friendly name instead of
-hunting for UUIDs.
+Name and resume Claude Code, Codex, and Gemini sessions by
+human-friendly name instead of hunting for UUIDs.
 
 Provides:
 
 - The `/save <session-name>` slash command.
+- The `/rn <session-name>` alias for `/save`.
 - The `resume-session` skill (Claude knows when to invoke it from
   phrases like "resume foo" or "list my sessions").
-- Two hooks that keep the registry fresh automatically:
+- Two Claude Code hooks that keep the Claude registry fresh automatically:
   - `UserPromptSubmit` catches `/rename <name>` (legacy path).
   - `SessionEnd` refreshes `last_updated` and auto-registers any
     unnamed session under a slug derived from its first prompt.
 - A registry CLI at `scripts/session_registry.py` (list, get, resume,
-  keep, prune, etc).
+  keep, prune, etc). It supports `--agent auto|claude|codex|gemini`.
 
-Registry data lives at `~/.claude/session-names/index.json` and is
-**not** part of this repo — it's per-machine runtime state.
+Registry data is per-agent, per-machine runtime state:
+
+- Claude: `~/.claude/session-names/index.json`
+- Codex: `~/.codex/session-names/index.json`
+- Gemini: `~/.gemini/session-names/index.json`
+
+Codex registrations also update `~/.codex/state_5.sqlite` so
+`codex resume <name>` works with the native Codex resume command.
 
 ## Install
 
@@ -29,7 +36,8 @@ The installer:
 
 1. Symlinks `~/.claude/skills/resume-session` -> this repo.
 2. Symlinks `~/.claude/commands/save.md` -> `commands/save.md` here.
-3. Merges the two hooks into `~/.claude/settings.json` (idempotent —
+3. Symlinks `~/.claude/commands/rn.md` -> `commands/rn.md` here.
+4. Merges the two hooks into `~/.claude/settings.json` (idempotent —
    safe to re-run).
 
 Restart Claude Code afterwards so the new hook config takes effect.
@@ -39,8 +47,9 @@ Restart Claude Code afterwards so the new hook config takes effect.
 In any Claude Code session:
 
 - `/save my-session` — register the current session under a name.
-- "Resume my-session" — Claude looks up the entry and prints the
-  `cd <cwd> && claude --resume <id>` command for you to run.
+- `/rn my-session` — same as `/save`, shorter to type.
+- "Resume my-session" — the skill looks up the entry and prints the
+  matching `cd <cwd> && <agent resume command>`.
 - "List my sessions" — Claude shows the registry sorted newest-first.
 - "Keep my-session" — marks the entry MUSTKEEP and snapshots its
   transcript to `~/.claude/session-names/backups/`.
@@ -50,6 +59,8 @@ From the shell, the registry CLI is the source of truth:
 ```bash
 python3 ~/.claude/skills/resume-session/scripts/session_registry.py list
 python3 ~/.claude/skills/resume-session/scripts/session_registry.py resume-cmd my-session
+python3 ~/.claude/skills/resume-session/scripts/session_registry.py --agent codex list
+python3 ~/.claude/skills/resume-session/scripts/session_registry.py --agent gemini list
 ```
 
 ## Relocating a session to a different directory
@@ -106,7 +117,8 @@ session-organizer/
 ├── uninstall.sh
 ├── SKILL.md             # the resume-session skill body
 ├── commands/
-│   └── save.md          # the /save slash command
+│   ├── save.md          # the /save slash command
+│   └── rn.md            # the /rn alias
 ├── scripts/
 │   ├── session_registry.py
 │   ├── rename_hook.py

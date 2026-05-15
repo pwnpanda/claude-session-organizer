@@ -5,6 +5,7 @@
 # - Symlinks ~/.claude/skills/load-context         -> <repo>/load-context
 # - Symlinks ~/.claude/skills/resume-session       -> <repo>/resume-session
 # - Symlinks ~/.claude/commands/save.md            -> <repo>/resume-session/commands/save.md
+# - Symlinks ~/.claude/commands/rn.md              -> <repo>/resume-session/commands/rn.md
 # - Idempotently merges hooks into ~/.claude/settings.json:
 #     SessionEnd       -> conversation-summary/scripts/write_summary.sh
 #     SessionEnd       -> resume-session/scripts/session_end_hook.py
@@ -65,6 +66,7 @@ link_target "${SKILLS_DIR}/conversation-summary" "${REPO}/conversation-summary"
 link_target "${SKILLS_DIR}/load-context"         "${REPO}/load-context"
 link_target "${SKILLS_DIR}/resume-session"       "${REPO}/resume-session"
 link_target "${CLAUDE_DIR}/commands/save.md"     "${REPO}/resume-session/commands/save.md"
+link_target "${CLAUDE_DIR}/commands/rn.md"       "${REPO}/resume-session/commands/rn.md"
 
 echo "Merging hooks into ${SETTINGS}..."
 python3 - "${SETTINGS}" <<'PY'
@@ -176,3 +178,4 @@ echo "Round-trip:"
 echo "  - SessionEnd writes .context-handoff.json (at git repo root if available, else cwd)"
 echo "  - To load it in a new session, ask Claude to /load-context (manual only)"
 echo "  - /save my-session registers the current session under a human-friendly name"
+echo "  - /rn my-session does the same with a shorter alias"

@@ -1,43 +1,63 @@
 #!/usr/bin/env python3
-"""Named-session registry for Claude Code.
+"""Named-session registry for Claude Code, Codex, and Gemini.
 
-Persists a mapping from human-friendly names to Claude Code session
-metadata so sessions can be resumed by name via `claude --resume <id>`.
+Persists mappings from human-friendly names to agent session metadata.
+Claude keeps the original registry path for backward compatibility. Codex
+also updates its native thread title database so `codex resume <name>` works.
 
-Storage: ~/.claude/session-names/index.json
+Storage:
+  Claude: ~/.claude/session-names/index.json
+  Codex:  ~/.codex/session-names/index.json
+  Gemini: ~/.gemini/session-names/index.json
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-REGISTRY_DIR = Path.home() / ".claude" / "session-names"
-INDEX_PATH = REGISTRY_DIR / "index.json"
-BACKUP_DIR = REGISTRY_DIR / "backups"
+AGENTS = ("claude", "codex", "gemini")
+CURRENT_AGENT = "claude"
+
+REGISTRY_PATHS = {
+    "claude": Path.home() / ".claude" / "session-names" / "index.json",
+    "codex": Path.home() / ".codex" / "session-names" / "index.json",
+    "gemini": Path.home() / ".gemini" / "session-names" / "index.json",
+}
+BACKUP_DIRS = {
+    agent: path.parent / "backups"
+    for agent, path in REGISTRY_PATHS.items()
+}
 CC_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+CODEX_STATE_DB = Path.home() / ".codex" / "state_5.sqlite"
+CODEX_SESSIONS_DIR = Path.home() / ".codex" / "sessions"
+GEMINI_TMP_DIR = Path.home() / ".gemini" / "tmp"
+GEMINI_PROJECTS_PATH = Path.home() / ".gemini" / "projects.json"
 
 
 def load_index() -> dict:
-    if not INDEX_PATH.exists():
+    path = REGISTRY_PATHS[CURRENT_AGENT]
+    if not path.exists():
         return {}
     try:
-        return json.loads(INDEX_PATH.read_text())
+        return json.loads(path.read_text())
     except json.JSONDecodeError:
         return {}
 
 
 def save_index(index: dict) -> None:
-    REGISTRY_DIR.mkdir(parents=True, exist_ok=True)
-    fd, tmp_path = tempfile.mkstemp(dir=REGISTRY_DIR, prefix=".index.", suffix=".json")
+    path = REGISTRY_PATHS[CURRENT_AGENT]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(dir=path.parent, prefix=".index.", suffix=".json")
     try:
         with os.fdopen(fd, "w") as f:
             json.dump(index, f, indent=2, sort_keys=True)
-        os.replace(tmp_path, INDEX_PATH)
+        os.replace(tmp_path, path)
     except Exception:
         Path(tmp_path).unlink(missing_ok=True)
         raise
@@ -45,6 +65,13 @@ def save_index(index: dict) -> None:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _set_current_agent(agent: str) -> None:
+    global CURRENT_AGENT
+    if agent not in AGENTS:
+        raise ValueError(f"unsupported agent: {agent}")
+    CURRENT_AGENT = agent
 
 
 def _encoded_cwd(cwd: str) -> str:
@@ -69,6 +96,7 @@ def cmd_register(args: argparse.Namespace) -> int:
     entry = index.get(args.name, {})
     entry.setdefault("created", now_iso())
     entry.update({
+        "agent": CURRENT_AGENT,
         "session_id": args.session_id,
         "cwd": args.cwd,
         "last_updated": now_iso(),
@@ -80,8 +108,10 @@ def cmd_register(args: argparse.Namespace) -> int:
     else:
         entry.pop("auto", None)
     index[args.name] = entry
+    if CURRENT_AGENT == "codex":
+        _set_codex_thread_title(args.session_id, args.name)
     save_index(index)
-    print(f"Registered '{args.name}' -> {args.session_id[:8]} ({args.cwd})")
+    print(f"Registered '{args.name}' -> {CURRENT_AGENT}:{args.session_id[:8]} ({args.cwd})")
     return 0
 
 
@@ -182,6 +212,9 @@ def _search_transcripts(query: str) -> set[str]:
     Uses `rg` when available (much faster on large transcript corpora), falls
     back to a pure-Python scan otherwise. Either way the scan is case-insensitive.
     """
+    if CURRENT_AGENT != "claude":
+        return set()
+
     import shutil
     import subprocess
 
@@ -192,7 +225,15 @@ def _search_transcripts(query: str) -> set[str]:
     if rg:
         try:
             proc = subprocess.run(
-                [rg, "--files-with-matches", "-i", "--glob", "*.jsonl", query, str(CC_PROJECTS_DIR)],
+                [
+                    rg,
+                    "--files-with-matches",
+                    "-i",
+                    "--glob",
+                    "*.jsonl",
+                    query,
+                    str(CC_PROJECTS_DIR),
+                ],
                 check=False,
                 capture_output=True,
                 text=True,
@@ -235,10 +276,26 @@ def cmd_remove(args: argparse.Namespace) -> int:
 
 
 def _find_transcript(session_id: str) -> Path | None:
-    if not CC_PROJECTS_DIR.is_dir():
+    if CURRENT_AGENT == "claude":
+        if not CC_PROJECTS_DIR.is_dir():
+            return None
+        matches = list(CC_PROJECTS_DIR.glob(f"*/{session_id}.jsonl"))
+        return matches[0] if matches else None
+
+    if CURRENT_AGENT == "codex":
+        path = _codex_rollout_path(session_id)
+        if path and path.is_file():
+            return path
+        matches = list(CODEX_SESSIONS_DIR.glob(f"**/*{session_id}.jsonl"))
+        return matches[0] if matches else None
+
+    if CURRENT_AGENT == "gemini":
+        record = _find_gemini_session_record(session_id=session_id)
+        if record:
+            return record["path"]
         return None
-    matches = list(CC_PROJECTS_DIR.glob(f"*/{session_id}.jsonl"))
-    return matches[0] if matches else None
+
+    return None
 
 
 def _resolve_resume_cwd(session_id: str, fallback: str) -> tuple[str, Path | None]:
@@ -260,7 +317,7 @@ def _resolve_resume_cwd(session_id: str, fallback: str) -> tuple[str, Path | Non
                     obj = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                cwd = obj.get("cwd")
+                cwd = obj.get("cwd") or _codex_cwd_from_event(obj)
                 if cwd:
                     return cwd, transcript
     except OSError:
@@ -282,7 +339,7 @@ def cmd_keep(args: argparse.Namespace) -> int:
     transcript = _find_transcript(session_id) if session_id else None
     if not transcript:
         print(
-            f"Warning: no transcript found for session {session_id[:8]} under {CC_PROJECTS_DIR}. "
+            f"Warning: no transcript/log found for {CURRENT_AGENT} session {session_id[:8]}. "
             "Marking as keep, but no backup taken.",
             file=sys.stderr,
         )
@@ -291,8 +348,10 @@ def cmd_keep(args: argparse.Namespace) -> int:
         save_index(index)
         return 0
 
-    BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    dest = BACKUP_DIR / f"{args.name}-{session_id[:8]}.jsonl"
+    backup_dir = BACKUP_DIRS[CURRENT_AGENT]
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    suffix = ".jsonl" if CURRENT_AGENT != "gemini" else ".json"
+    dest = backup_dir / f"{args.name}-{session_id[:8]}{suffix}"
     shutil.copy2(transcript, dest)
     entry["keep"] = True
     entry["backup_path"] = str(dest)
@@ -425,8 +484,238 @@ def _find_current_session_id(cwd: str) -> str | None:
     return best[1] if best else None
 
 
+def _find_current_codex_thread_id(cwd: str) -> str | None:
+    env_thread_id = os.environ.get("CODEX_THREAD_ID")
+    if env_thread_id:
+        return env_thread_id
+    if not CODEX_STATE_DB.is_file():
+        return None
+    target = str(Path(cwd).resolve())
+    try:
+        with sqlite3.connect(CODEX_STATE_DB, timeout=5) as conn:
+            row = conn.execute(
+                """
+                SELECT id
+                FROM threads
+                WHERE cwd = ? AND archived = 0
+                ORDER BY updated_at_ms DESC, updated_at DESC
+                LIMIT 1
+                """,
+                (target,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    return row[0] if row else None
+
+
+def _codex_rollout_path(session_id: str) -> Path | None:
+    if not CODEX_STATE_DB.is_file():
+        return None
+    try:
+        with sqlite3.connect(CODEX_STATE_DB, timeout=5) as conn:
+            row = conn.execute(
+                "SELECT rollout_path FROM threads WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    if not row or not row[0]:
+        return None
+    return Path(row[0]).expanduser()
+
+
+def _codex_cwd_from_event(event: dict) -> str | None:
+    payload = event.get("payload")
+    if isinstance(payload, dict):
+        cwd = payload.get("cwd")
+        if isinstance(cwd, str):
+            return cwd
+    return None
+
+
+def _set_codex_thread_title(session_id: str, title: str) -> None:
+    if not CODEX_STATE_DB.is_file():
+        return
+    now = int(datetime.now(timezone.utc).timestamp())
+    try:
+        with sqlite3.connect(CODEX_STATE_DB, timeout=5) as conn:
+            conn.execute(
+                """
+                UPDATE threads
+                SET title = ?, updated_at = ?, updated_at_ms = ?
+                WHERE id = ?
+                """,
+                (title, now, now * 1000, session_id),
+            )
+    except sqlite3.Error as exc:
+        print(f"Warning: could not update Codex thread title: {exc}", file=sys.stderr)
+
+
+def _gemini_project_alias(cwd: str) -> str | None:
+    if not GEMINI_PROJECTS_PATH.is_file():
+        return None
+    try:
+        data = json.loads(GEMINI_PROJECTS_PATH.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    projects = data.get("projects", {})
+    if not isinstance(projects, dict):
+        return None
+    target = str(Path(cwd).resolve())
+    for project_cwd, alias in projects.items():
+        if str(Path(project_cwd).expanduser().resolve()) == target:
+            return str(alias)
+    return None
+
+
+def _parse_gemini_timestamp(value: str | None) -> datetime:
+    if not value:
+        return datetime.fromtimestamp(0, timezone.utc)
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.fromtimestamp(0, timezone.utc)
+
+
+def _gemini_log_records() -> list[dict]:
+    if not GEMINI_TMP_DIR.is_dir():
+        return []
+    records: list[dict] = []
+
+    for path in GEMINI_TMP_DIR.glob("*/logs.json"):
+        try:
+            events = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(events, list):
+            continue
+        alias = path.parent.name
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            session_id = event.get("sessionId")
+            if not session_id:
+                continue
+            records.append({
+                "session_id": str(session_id),
+                "alias": alias,
+                "path": path,
+                "timestamp": _parse_gemini_timestamp(event.get("timestamp")),
+            })
+
+    for path in GEMINI_TMP_DIR.glob("*/chats/session-*.jsonl"):
+        alias = path.parent.parent.name
+        session_id: str | None = None
+        timestamp = datetime.fromtimestamp(0, timezone.utc)
+        try:
+            with path.open(encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+                    if session_id is None and isinstance(event.get("sessionId"), str):
+                        session_id = event["sessionId"]
+                    if isinstance(event.get("timestamp"), str):
+                        timestamp = max(timestamp, _parse_gemini_timestamp(event["timestamp"]))
+                    set_event = event.get("$set")
+                    has_last_updated = (
+                        isinstance(set_event, dict)
+                        and isinstance(set_event.get("lastUpdated"), str)
+                    )
+                    if has_last_updated:
+                        timestamp = max(
+                            timestamp,
+                            _parse_gemini_timestamp(set_event["lastUpdated"]),
+                        )
+                    if isinstance(event.get("lastUpdated"), str):
+                        timestamp = max(timestamp, _parse_gemini_timestamp(event["lastUpdated"]))
+        except OSError:
+            continue
+        if session_id:
+            records.append({
+                "session_id": session_id,
+                "alias": alias,
+                "path": path,
+                "timestamp": timestamp,
+            })
+    return records
+
+
+def _find_gemini_session_record(
+    cwd: str | None = None,
+    session_id: str | None = None,
+) -> dict | None:
+    alias = _gemini_project_alias(cwd) if cwd else None
+    best: dict | None = None
+    for record in _gemini_log_records():
+        if alias and record["alias"] != alias:
+            continue
+        if session_id and record["session_id"] != session_id:
+            continue
+        if best is None or record["timestamp"] > best["timestamp"]:
+            best = record
+    return best
+
+
+def _find_current_gemini_session_id(cwd: str) -> str | None:
+    record = _find_gemini_session_record(cwd=cwd)
+    if not record:
+        return None
+    return record["session_id"]
+
+
+def _gemini_resume_index(session_id: str, cwd: str) -> int | None:
+    alias = _gemini_project_alias(cwd)
+    if not alias:
+        return None
+    latest_by_session: dict[str, datetime] = {}
+    for record in _gemini_log_records():
+        if record["alias"] != alias:
+            continue
+        sid = record["session_id"]
+        timestamp = record["timestamp"]
+        if sid not in latest_by_session or timestamp > latest_by_session[sid]:
+            latest_by_session[sid] = timestamp
+
+    ordered = sorted(
+        latest_by_session.items(),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    for index, (sid, _) in enumerate(ordered, start=1):
+        if sid == session_id:
+            return index
+    return None
+
+
 def cmd_register_current(args: argparse.Namespace) -> int:
     """Register the current session (looked up by cwd) under a name."""
+    if CURRENT_AGENT == "codex":
+        sid = _find_current_codex_thread_id(args.cwd)
+        if not sid:
+            print(
+                f"Could not find an active Codex thread for cwd {args.cwd}",
+                file=sys.stderr,
+            )
+            return 1
+        _set_codex_thread_title(sid, args.name)
+        args.session_id = sid
+        return cmd_register(args)
+
+    if CURRENT_AGENT == "gemini":
+        sid = _find_current_gemini_session_id(args.cwd)
+        if not sid:
+            print(
+                f"Could not find a Gemini session for cwd {args.cwd}",
+                file=sys.stderr,
+            )
+            return 1
+        args.session_id = sid
+        return cmd_register(args)
+
     sid = _find_current_session_id(args.cwd)
     if not sid:
         print(
@@ -455,12 +744,24 @@ def cmd_resume_cmd(args: argparse.Namespace) -> int:
     cwd, transcript = _resolve_resume_cwd(sid, entry.get("cwd", ""))
     if transcript is None:
         print(
-            f"Transcript for session {sid[:8]} is missing under {CC_PROJECTS_DIR}. "
+            f"Transcript/log for {CURRENT_AGENT} session {sid[:8]} is missing. "
             f"Cannot resume. Use `prune --orphans` to clean up the entry.",
             file=sys.stderr,
         )
         return 1
-    print(f"cd {cwd!s} && claude --resume {sid}")
+    if CURRENT_AGENT == "codex":
+        print(f"cd {cwd!s} && codex resume {args.name}")
+    elif CURRENT_AGENT == "gemini":
+        resume_index = _gemini_resume_index(sid, cwd)
+        if resume_index is None:
+            print(
+                f"Could not resolve Gemini resume index for session {sid[:8]}.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"cd {cwd!s} && gemini --resume {resume_index}")
+    else:
+        print(f"cd {cwd!s} && claude --resume {sid}")
     return 0
 
 
@@ -480,6 +781,10 @@ def cmd_move(args: argparse.Namespace) -> int:
     """
     import re
     import time
+
+    if CURRENT_AGENT != "claude":
+        print("move is only supported for Claude Code transcripts.", file=sys.stderr)
+        return 1
 
     index = load_index()
     entry = index.get(args.name)
@@ -623,16 +928,43 @@ Common workflows:
     %(prog)s prune --orphans --dry-run
     %(prog)s prune --orphans
 
-Registry: ~/.claude/session-names/index.json
+Registries:
+  Claude: ~/.claude/session-names/index.json
+  Codex:  ~/.codex/session-names/index.json
+  Gemini: ~/.gemini/session-names/index.json
 """
+
+
+def detect_agent(requested: str, cwd: str | None = None) -> str:
+    if requested != "auto":
+        return requested
+    if os.environ.get("CODEX_THREAD_ID"):
+        return "codex"
+    if os.environ.get("GEMINI_SESSION_ID") or os.environ.get("GEMINI_CLI"):
+        return "gemini"
+
+    cwd = cwd or os.getcwd()
+    if _find_current_session_id(cwd):
+        return "claude"
+    if _find_current_gemini_session_id(cwd):
+        return "gemini"
+    if _find_current_codex_thread_id(cwd):
+        return "codex"
+    return "claude"
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="session_registry.py",
-        description="Manage the Claude Code named-session registry.",
+        description="Manage named-session registries for Claude Code, Codex, and Gemini.",
         epilog=TOP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--agent",
+        choices=("auto", *AGENTS),
+        default="auto",
+        help="Registry backend to use. auto detects Codex/Claude/Gemini.",
     )
     # Not required: running with no args prints help (see main()).
     sub = parser.add_subparsers(dest="cmd", metavar="COMMAND")
@@ -746,7 +1078,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog="Example:\n"
         "  $(%(prog)s proxmox-backup)\n"
         "  # or, inside Claude Code, prefix with ! to run in the harness shell:\n"
-        "  ! $(python3 ~/.claude/skills/resume-session/scripts/session_registry.py resume-cmd proxmox-backup)",
+        "  ! $(python3 ~/.claude/skills/resume-session/scripts/"
+        "session_registry.py resume-cmd proxmox-backup)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p_resume.add_argument("name")
@@ -870,6 +1203,8 @@ def main() -> int:
     if not args.cmd:
         parser.print_help()
         return 0
+    cwd = getattr(args, "cwd", None) or os.getcwd()
+    _set_current_agent(detect_agent(args.agent, cwd))
     return args.func(args)
 
 

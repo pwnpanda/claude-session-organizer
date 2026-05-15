@@ -1,6 +1,6 @@
 ---
 name: resume-session
-description: Look up and resume previously-named Claude Code sessions by human-friendly name. Use when the user says "resume NAME", "continue NAME", "reopen NAME", "pick up NAME where we left off", "go back to NAME", "list my sessions", "what named sessions do I have", or similar phrasing referring to restoring a prior conversation by its registered name. Also use when the user wants to manually register, rename, or remove a named session.
+description: Look up and resume previously-named Claude Code, Codex, and Gemini sessions by human-friendly name. Use when the user says "resume NAME", "continue NAME", "reopen NAME", "pick up NAME where we left off", "go back to NAME", "list my sessions", "what named sessions do I have", or similar phrasing referring to restoring a prior conversation by its registered name. Also use when the user wants to manually register, rename, or remove a named session.
 ---
 
 # Resume Session
@@ -8,11 +8,18 @@ description: Look up and resume previously-named Claude Code sessions by human-f
 ## Overview
 
 A registry that maps human-friendly names (e.g. `MyNewChat`) to
-Claude Code session IDs so the user can resume prior conversations by
-name instead of hunting for UUIDs. The mapping lives at
-`~/.claude/session-names/index.json`. Two hooks (see
-`references/setup.md`) keep it up to date automatically on `/rename`
-and on session exit.
+Claude Code, Codex, and Gemini session IDs so the user can resume prior
+conversations by name instead of hunting for UUIDs. Registry data lives
+in one per-agent index:
+
+- Claude: `~/.claude/session-names/index.json`
+- Codex: `~/.codex/session-names/index.json`
+- Gemini: `~/.gemini/session-names/index.json`
+
+Two Claude hooks (see `references/setup.md`) keep the Claude registry up
+to date automatically on `/rename` and on session exit. Codex entries
+also update Codex's native SQLite thread title so `codex resume <name>`
+works.
 
 ## When to trigger
 
@@ -42,10 +49,14 @@ any `cwd`.
 python3 ~/.claude/skills/resume-session/scripts/session_registry.py <command>
 ```
 
+Use `--agent auto|claude|codex|gemini` before the command when you need
+a specific backend. `auto` detects Codex from `CODEX_THREAD_ID`, then
+active Claude/Gemini state for the current working directory.
+
 ### Resume by name
 
 1. Run `session_registry.py resume-cmd <name>`. It prints the exact
-   shell command needed (`cd <cwd> && claude --resume <session-id>`).
+   shell command needed for the detected agent.
    The cwd is read from the transcript file itself, so the command
    works even when the registry's cached cwd has drifted.
 2. If the transcript file is missing, `resume-cmd` exits non-zero with

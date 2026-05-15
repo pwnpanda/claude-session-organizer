@@ -1,8 +1,9 @@
 # Hook Setup for resume-session
 
-This skill relies on two Claude Code hooks to keep the registry fresh
-automatically. The hooks live in the skill's `scripts/` directory and are
-wired up through `~/.claude/settings.json`.
+This skill relies on two Claude Code hooks to keep the Claude registry
+fresh automatically. The registry CLI also supports Codex and Gemini via
+`--agent auto|claude|codex|gemini`, but those agents do not use these
+Claude hook entries.
 
 ## What gets wired up
 
@@ -57,8 +58,8 @@ fall back to one of these:
    current session — it will call
    `session_registry.py register <name> --session-id <id> --cwd <cwd>`.
 2. **Custom slash command:** add a project or user slash command (e.g.
-   `/save`) whose body calls the registry script directly. This bypasses
-   the built-in handler.
+   `/save` or `/rn`) whose body calls the registry script directly.
+   This bypasses the built-in handler.
 
 ## Verifying the hooks
 
@@ -77,11 +78,18 @@ after submitting that prompt in a session.
 
 ## Index file schema
 
-`~/.claude/session-names/index.json`:
+Per-agent registry paths:
+
+- Claude: `~/.claude/session-names/index.json`
+- Codex: `~/.codex/session-names/index.json`
+- Gemini: `~/.gemini/session-names/index.json`
+
+Index entry schema:
 
 ```json
 {
   "MyNewChat": {
+    "agent": "claude",
     "session_id": "36e45e92-22e2-44e1-ac20-e426694616aa",
     "cwd": "/home/robin/Hacking/SSTI",
     "created": "2026-04-18T10:30:00+00:00",
