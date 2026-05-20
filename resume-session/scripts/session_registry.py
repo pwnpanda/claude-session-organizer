@@ -765,6 +765,207 @@ def cmd_resume_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
+def _resume_token(agent: str, name: str, session_id: str, cwd: str) -> str | None:
+    """Return the agent-native identifier to hand to its resume command.
+
+    Codex resumes by registered name, Gemini by a per-project resume index,
+    Claude by session UUID. Returns None when the identifier can't be resolved.
+    """
+    if agent == "codex":
+        return name
+    if agent == "gemini":
+        index = _gemini_resume_index(session_id, cwd)
+        return str(index) if index is not None else None
+    return session_id
+
+
+def _all_candidates(prefix: str, agents: tuple[str, ...]) -> list[dict]:
+    """Resumable sessions across `agents` whose name starts with `prefix`.
+
+    Scans each given agent's registry. Each result carries the cwd resolved
+    from the transcript itself, so a drifted index still yields a working
+    resume target. Sessions whose transcript is gone are dropped — they cannot
+    be resumed. Sorted most-recently-updated first.
+    """
+    needle = prefix.lower()
+    found: list[dict] = []
+    for agent in agents:
+        _set_current_agent(agent)
+        for name, entry in load_index().items():
+            if not name.lower().startswith(needle):
+                continue
+            session_id = entry.get("session_id") or ""
+            if not session_id:
+                continue
+            cwd, transcript = _resolve_resume_cwd(session_id, entry.get("cwd", ""))
+            if transcript is None:
+                continue
+            found.append({
+                "agent": agent,
+                "name": name,
+                "session_id": session_id,
+                "cwd": cwd,
+                "updated": (entry.get("last_updated") or "")[:19],
+            })
+    found.sort(key=lambda s: s["updated"], reverse=True)
+    return found
+
+
+def _pick_session(sessions: list[dict], header: str, show_cwd: bool) -> dict | None:
+    """Arrow-key picker over `sessions`; returns the chosen entry or None.
+
+    Renders to and reads keys from /dev/tty directly so the caller's stdout
+    (which carries the machine-readable result) stays clean. Returns None when
+    the user cancels or when no controlling terminal is available.
+    """
+    import select as _select
+    import shutil
+    import termios
+    import tty as _tty
+
+    try:
+        tty_in = open("/dev/tty", "rb", buffering=0)
+        tty_out = open("/dev/tty", "w")
+    except OSError:
+        print(
+            "airesume: several matches but no terminal to pick from — "
+            "narrow the prefix.",
+            file=sys.stderr,
+        )
+        return None
+
+    n = len(sessions)
+    selected = 0
+    name_w = min(max((len(s["name"]) for s in sessions), default=4), 44)
+
+    def render(first: bool) -> None:
+        cols = shutil.get_terminal_size((100, 24)).columns
+        lines = [f"\033[1m{header}\033[0m"]
+        for i, s in enumerate(sessions):
+            cursor = "›" if i == selected else " "
+            row = f"{cursor} {s['agent']:6s}  {s['name']:{name_w}s}  {s['updated']}"
+            if show_cwd:
+                row += f"  {s['cwd']}"
+            row = row[: cols - 1]
+            lines.append(f"\033[7m{row}\033[0m" if i == selected else row)
+        lines.append(
+            "\033[2m  ↑/↓ or j/k move · Enter select "
+            "· q/Esc cancel\033[0m"
+        )
+        if not first:
+            tty_out.write(f"\033[{len(lines)}A")
+        for line in lines:
+            tty_out.write("\r\033[K" + line + "\n")
+        tty_out.flush()
+
+    fd = tty_in.fileno()
+    saved = termios.tcgetattr(fd)
+    result: dict | None = None
+    try:
+        _tty.setraw(fd)
+        render(first=True)
+        while True:
+            ch = tty_in.read(1)
+            if not ch or ch in (b"q", b"\x03"):
+                break
+            if ch in (b"\r", b"\n"):
+                result = sessions[selected]
+                break
+            if ch == b"\x1b":
+                ready, _, _ = _select.select([fd], [], [], 0.05)
+                if not ready:
+                    break
+                seq = tty_in.read(2)
+                if seq == b"[A":
+                    selected = (selected - 1) % n
+                elif seq == b"[B":
+                    selected = (selected + 1) % n
+                else:
+                    continue
+            elif ch == b"k":
+                selected = (selected - 1) % n
+            elif ch == b"j":
+                selected = (selected + 1) % n
+            else:
+                continue
+            render(first=False)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        tty_out.write("\n")
+        tty_out.flush()
+        tty_in.close()
+        tty_out.close()
+    return result
+
+
+def cmd_prefix_resume(args: argparse.Namespace) -> int:
+    """Resolve a name-prefix to one resumable session.
+
+    Scans every agent's registry, or only one when the global `--agent` flag
+    names a specific agent. A sole match in the calling shell's cwd wins
+    outright; several in-cwd matches open the picker. With nothing in-cwd, a
+    unique exact-name (or sole overall) match elsewhere wins, otherwise the
+    picker runs across folders. Prints `<agent>\\t<cwd>\\t<token>` on success.
+    """
+    shell_cwd = os.path.normpath(os.path.realpath(args.cwd or os.getcwd()))
+    agents = AGENTS if args.agent == "auto" else (args.agent,)
+    candidates = _all_candidates(args.prefix, agents)
+    if not candidates:
+        print(
+            f"airesume: no resumable session matching '{args.prefix}' "
+            f"in {'/'.join(agents)}.",
+            file=sys.stderr,
+        )
+        return 2
+
+    def in_cwd(session: dict) -> bool:
+        return os.path.normpath(os.path.realpath(session["cwd"])) == shell_cwd
+
+    here = [s for s in candidates if in_cwd(s)]
+    elsewhere = [s for s in candidates if not in_cwd(s)]
+
+    if len(here) == 1:
+        chosen = here[0]
+    elif len(here) > 1:
+        chosen = _pick_session(
+            here, f"{len(here)} sessions match '{args.prefix}' in this folder:", False
+        )
+    else:
+        exact = [s for s in elsewhere if s["name"].lower() == args.prefix.lower()]
+        if len(exact) == 1:
+            chosen = exact[0]
+        elif len(elsewhere) == 1:
+            chosen = elsewhere[0]
+        else:
+            chosen = _pick_session(
+                elsewhere,
+                f"{len(elsewhere)} sessions match '{args.prefix}' in other folders:",
+                True,
+            )
+
+    if chosen is None:
+        print("airesume: cancelled.", file=sys.stderr)
+        return 3
+
+    where = "this folder" if in_cwd(chosen) else chosen["cwd"]
+    print(
+        f'airesume → {chosen["agent"]} "{chosen["name"]}" [{where}]',
+        file=sys.stderr,
+    )
+    token = _resume_token(
+        chosen["agent"], chosen["name"], chosen["session_id"], chosen["cwd"]
+    )
+    if token is None:
+        print(
+            f'airesume: could not resolve a resume target for {chosen["agent"]} '
+            f'session "{chosen["name"]}".',
+            file=sys.stderr,
+        )
+        return 2
+    print(f"{chosen['agent']}\t{chosen['cwd']}\t{token}")
+    return 0
+
+
 def cmd_move(args: argparse.Namespace) -> int:
     """Relocate a recorded session's transcript to a different cwd.
 
@@ -1084,6 +1285,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_resume.add_argument("name")
     p_resume.set_defaults(func=cmd_resume_cmd)
+
+    p_prefix = sub.add_parser(
+        "prefix-resume",
+        help="Resolve a name-prefix across all agents to a resumable session",
+        description="Scan the claude, codex, and gemini registries for sessions "
+        "whose name starts with PREFIX, then pick the most likely target: a "
+        "sole match in --cwd wins outright; several there open an interactive "
+        "picker; with nothing in --cwd, a unique exact-name (or sole overall) "
+        "match elsewhere wins, otherwise a cross-folder picker runs. Prints one "
+        "tab-separated line `<agent>\\t<cwd>\\t<token>` on success — token is "
+        "the session UUID (claude), registered name (codex), or resume index "
+        "(gemini). Pass the global --agent flag to restrict the scan to a "
+        "single registry. Drives the `airesume` shell function.",
+        epilog="Exit codes: 0 resume, 2 no match, 3 cancelled.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_prefix.add_argument(
+        "prefix", help="Session-name prefix typed after `airesume`."
+    )
+    p_prefix.add_argument(
+        "--cwd", required=True, help="The calling shell's working directory ($PWD)."
+    )
+    p_prefix.set_defaults(func=cmd_prefix_resume)
 
     p_move = sub.add_parser(
         "move",

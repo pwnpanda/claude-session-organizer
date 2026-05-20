@@ -171,6 +171,38 @@ for rc in "${HOME}/.zshrc" "${HOME}/.bashrc"; do
   fi
 done
 
+ALIAS_FILE="${HOME}/.zsh_alias"
+echo
+echo "Optional: the 'airesume' shell function resumes a named session"
+echo "(claude/codex/gemini) by name prefix — restrict to one agent with"
+echo "-c (claude), -g (gemini), or -x (codex). It is sourced from ~/.zsh_alias,"
+echo "after your claude/codex/gemini aliases."
+if grep -Fq "skills/resume-session/shell/airesume.sh" "${ALIAS_FILE}" 2>/dev/null; then
+  echo "  ${ALIAS_FILE}: already sources airesume.sh"
+elif [[ -f "${ALIAS_FILE}" ]]; then
+  airesume_reply="y"
+  if [[ -t 0 ]]; then
+    read -r -p "  Append the airesume source line to ${ALIAS_FILE}? [Y/n] " airesume_reply || true
+  fi
+  if [[ "${airesume_reply}" =~ ^[Yy]?$ ]]; then
+    cat >>"${ALIAS_FILE}" <<'AIRESUME_RC'
+
+# airesume: resume a named AI session (claude/codex/gemini) by name-prefix.
+# Sourced last so the claude/codex/gemini aliases above are baked into the
+# function body (each picked session launches with your normal per-agent flags).
+[ -f "$HOME/.claude/skills/resume-session/shell/airesume.sh" ] && \
+  source "$HOME/.claude/skills/resume-session/shell/airesume.sh"
+AIRESUME_RC
+    echo "  appended airesume to ${ALIAS_FILE}"
+  else
+    echo "  skipped — add this to ${ALIAS_FILE} yourself:"
+    echo "    source \"\$HOME/.claude/skills/resume-session/shell/airesume.sh\""
+  fi
+else
+  echo "  ${ALIAS_FILE} not found — add this to your shell rc yourself:"
+  echo "    source \"\$HOME/.claude/skills/resume-session/shell/airesume.sh\""
+fi
+
 echo
 echo "Done. Restart Claude Code (or open /hooks once) so the watcher picks up the changes."
 echo

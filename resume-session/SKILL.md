@@ -238,6 +238,37 @@ That gives them:
 `install.sh` prints the source line and (best-effort) reports whether
 each rc file already sources it.
 
+## Prefix-resume wrapper (`airesume`)
+
+`shell/airesume.sh` defines `airesume` — resume a named session by typing
+only a name *prefix*, matched across all three agents at once. Source it
+from `~/.zsh_alias` (after the `claude` / `codex` / `gemini` aliases, so
+each picked session launches with the user's normal per-agent flags):
+
+```bash
+source "$HOME/.claude/skills/resume-session/shell/airesume.sh"
+```
+
+- `airesume <prefix>` — scan the claude/codex/gemini registries for
+  sessions whose name starts with `<prefix>`, then resolve:
+  - one match in `$PWD` → resume it;
+  - several in `$PWD` → arrow-key picker;
+  - none in `$PWD`, a unique exact-name (or sole overall) match
+    elsewhere → resume it, `cd`-ing into its folder;
+  - none in `$PWD`, several elsewhere → picker with a folder column.
+- `airesume -c|-g|-x <prefix>` — restrict the scan to a single agent:
+  `-c` claude, `-g` gemini, `-x` codex. The flag must be the first
+  argument. It maps to the registry script's global `--agent` flag.
+- `airesume` (optionally with `-c|-g|-x`) — list recent named sessions.
+- `airesume -h` — usage summary.
+
+It is backed by the `prefix-resume` subcommand of `session_registry.py`,
+which prints `<agent>\t<cwd>\t<token>` (token = session UUID for claude,
+name for codex, resume index for gemini) and honours `--agent` to scan a
+single registry. Unlike the skill workflow, `airesume` is a shell
+function the user runs themselves, so resuming from inside a running
+session is not a concern.
+
 ## Safety
 
 - Hooks always exit 0 so renames and shutdowns are never blocked.

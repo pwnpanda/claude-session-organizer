@@ -1,3 +1,5 @@
 last-run.log
 *.tmp
 .DS_Store
+.serena/
+__pycache__/
