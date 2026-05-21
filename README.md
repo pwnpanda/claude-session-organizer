@@ -52,7 +52,7 @@ Optional: add the `airesume` wrapper to resume a session across **all three agen
 source "$HOME/.claude/skills/resume-session/shell/airesume.sh"
 ```
 
-`airesume <prefix>` scans every registry, prefers a match in the current folder, shows an arrow-key picker when several match, and `cd`s into the chosen session's folder before launching. Restrict the scan to one agent with a leading `-c` (claude), `-g` (gemini), or `-x` (codex). `airesume` with no prefix lists recent named sessions per agent. `install.sh` offers to append the source line to `~/.zsh_alias` for you.
+`airesume <prefix>` scans every registry, prefers a match in the current folder, shows an arrow-key picker when several match, and `cd`s into the chosen session's folder before launching. `airesume -s '<text>'` resolves by free-text description instead — keywords scored against name, summary, cwd, then transcript bodies. Restrict the scan to one agent with a leading `-c` (claude), `-g` (gemini), or `-x` (codex). `airesume` with no prefix lists recent named sessions per agent. `install.sh` offers to append the source line to `~/.zsh_alias` for you.
 
 To uninstall:
 
@@ -171,4 +171,4 @@ shellcheck conversation-summary/scripts/*.sh install.sh uninstall.sh resume-sess
 
 | Session | Summary | Date |
 |---------|---------|------|
-| `custom-resume` | Added `airesume`: a `prefix-resume` subcommand in `session_registry.py` plus a `shell/airesume.sh` function that resumes a named session across Claude/Codex/Gemini by name-prefix — preferring a match in the current folder, falling back to an exact/unique match elsewhere, and showing an arrow-key picker when several match. `-c`/`-g`/`-x` restrict the scan to one agent; `install.sh` offers to wire the function into `~/.zsh_alias`. | 2026-05-20 |
+| `custom-resume` | Added `airesume`: a `prefix-resume` subcommand in `session_registry.py` plus a `shell/airesume.sh` function that resumes a named session across Claude/Codex/Gemini by name-prefix — preferring a match in the current folder, falling back to an exact/unique match elsewhere, and showing an arrow-key picker when several match. `-c`/`-g`/`-x` restrict the scan to one agent; `-s '<text>'` resolves by free-text description (keyword scoring over metadata, then transcript bodies); `install.sh` offers to wire the function into `~/.zsh_alias`. | 2026-05-20 |

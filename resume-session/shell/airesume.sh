@@ -1,12 +1,13 @@
 # shellcheck shell=bash
-# airesume — resume a named AI session (Claude Code / Codex / Gemini) by
-# name-prefix. Scans the session registries, finds the most likely target,
-# and resumes it — picking interactively when several match.
+# airesume — resume a named AI session (Claude Code / Codex / Gemini).
+# Scans the session registries, finds the most likely target, and resumes
+# it — picking interactively when several match.
 #
 # Usage:
-#   airesume [-c|-g|-x] <prefix>   resolve <prefix> and resume
-#   airesume [-c|-g|-x]            list recent named sessions
-#   airesume -h                    show help
+#   airesume [-c|-g|-x] <prefix>        resolve a name-prefix and resume
+#   airesume [-c|-g|-x] -s '<text>'     find a session by description and resume
+#   airesume [-c|-g|-x]                 list recent named sessions
+#   airesume -h                         show help
 #
 # Optional agent filter (must be the FIRST argument):
 #   -c / --claude   restrict to Claude Code sessions
@@ -14,11 +15,12 @@
 #   -x / --codex    restrict to Codex sessions
 # With no filter, all three registries are scanned.
 #
-# Behaviour for `airesume <prefix>`:
-#   · 1 match in the current folder        -> resume it
-#   · several in the current folder        -> arrow-key picker
-#   · none here, 1 / exact match elsewhere -> resume it (with a notice)
-#   · none here, several elsewhere         -> picker, showing each folder
+# Resolution (both prefix and -s search):
+#   · exactly one match  -> resume it
+#   · several matches    -> arrow-key picker
+#   · no match           -> error, nothing resumed
+# Prefix mode additionally prefers a match in the current folder.
+#
 # Resuming cd's your shell into the session's folder, then launches the
 # matching AI: claude via the auto-resume wrapper, codex / gemini via your
 # aliases.
@@ -65,16 +67,18 @@ airesume() {
     ;;
   -h | --help)
     cat <<'USAGE'
-airesume — resume a named AI session by name-prefix.
+airesume — resume a named AI session.
 
-  airesume [-c|-g|-x] <prefix>   scan the session registries for sessions
-                                 whose name starts with <prefix>, then:
-                                   · 1 match in this folder       -> resume it
-                                   · several in this folder       -> picker
-                                   · none here, 1/exact elsewhere -> resume it
-                                   · none here, several elsewhere -> picker
-  airesume [-c|-g|-x]            list recent named sessions
-  airesume -h                    show this help
+  airesume [-c|-g|-x] <prefix>      resume a session whose name starts with
+                                    <prefix>
+  airesume [-c|-g|-x] -s '<text>'   resume a session matched by a free-text
+                                    description (keywords scored against
+                                    name, summary, cwd, then transcript body)
+  airesume [-c|-g|-x]               list recent named sessions
+  airesume -h                       show this help
+
+Resolution: one match resumes directly, several open an arrow-key picker,
+none is an error. Prefix mode also prefers a match in the current folder.
 
 Agent filter (optional, first argument only):
   -c / --claude   restrict to Claude Code sessions
@@ -89,12 +93,26 @@ USAGE
     ;;
   esac
 
-  local out rc
-  if [ -n "$agent_filter" ]; then
-    out="$(python3 "$registry" --agent "$agent_filter" prefix-resume "$1" --cwd "$PWD")"
+  # Pick the resolver: -s switches from name-prefix to free-text search.
+  local subcmd="prefix-resume"
+  local -a query_args
+  if [ "$1" = "-s" ] || [ "$1" = "--search" ]; then
+    shift
+    if [ -z "${1:-}" ]; then
+      echo "airesume: -s requires a search query" >&2
+      return 2
+    fi
+    subcmd="search-resume"
+    query_args=("$1")
   else
-    out="$(python3 "$registry" prefix-resume "$1" --cwd "$PWD")"
+    query_args=("$1" --cwd "$PWD")
   fi
+
+  local -a agent_args=()
+  [ -n "$agent_filter" ] && agent_args=(--agent "$agent_filter")
+
+  local out rc
+  out="$(python3 "$registry" "${agent_args[@]}" "$subcmd" "${query_args[@]}")"
   rc=$?
   [ "$rc" -ne 0 ] && return "$rc"
 

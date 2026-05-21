@@ -174,9 +174,9 @@ done
 ALIAS_FILE="${HOME}/.zsh_alias"
 echo
 echo "Optional: the 'airesume' shell function resumes a named session"
-echo "(claude/codex/gemini) by name prefix — restrict to one agent with"
-echo "-c (claude), -g (gemini), or -x (codex). It is sourced from ~/.zsh_alias,"
-echo "after your claude/codex/gemini aliases."
+echo "(claude/codex/gemini) by name prefix, or by free-text description with"
+echo "-s '<text>'. Restrict to one agent with -c (claude), -g (gemini), or"
+echo "-x (codex). It is sourced from ~/.zsh_alias, after your agent aliases."
 if grep -Fq "skills/resume-session/shell/airesume.sh" "${ALIAS_FILE}" 2>/dev/null; then
   echo "  ${ALIAS_FILE}: already sources airesume.sh"
 elif [[ -f "${ALIAS_FILE}" ]]; then

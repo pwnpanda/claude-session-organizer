@@ -779,6 +779,37 @@ def _resume_token(agent: str, name: str, session_id: str, cwd: str) -> str | Non
     return session_id
 
 
+def _candidate(agent: str, name: str, session_id: str, entry: dict, cwd: str) -> dict:
+    """Build the candidate dict shared by the prefix and search resolvers."""
+    return {
+        "agent": agent,
+        "name": name,
+        "session_id": session_id,
+        "cwd": cwd,
+        "updated": (entry.get("last_updated") or "")[:19],
+    }
+
+
+def _emit_resume(chosen: dict) -> int:
+    """Print the resolver's machine-readable result line for `chosen`.
+
+    Writes `<agent>\\t<cwd>\\t<token>` to stdout and returns 0, or an error to
+    stderr and returns 2 when the agent-native resume token can't be resolved.
+    """
+    token = _resume_token(
+        chosen["agent"], chosen["name"], chosen["session_id"], chosen["cwd"]
+    )
+    if token is None:
+        print(
+            f'airesume: could not resolve a resume target for {chosen["agent"]} '
+            f'session "{chosen["name"]}".',
+            file=sys.stderr,
+        )
+        return 2
+    print(f"{chosen['agent']}\t{chosen['cwd']}\t{token}")
+    return 0
+
+
 def _all_candidates(prefix: str, agents: tuple[str, ...]) -> list[dict]:
     """Resumable sessions across `agents` whose name starts with `prefix`.
 
@@ -800,13 +831,7 @@ def _all_candidates(prefix: str, agents: tuple[str, ...]) -> list[dict]:
             cwd, transcript = _resolve_resume_cwd(session_id, entry.get("cwd", ""))
             if transcript is None:
                 continue
-            found.append({
-                "agent": agent,
-                "name": name,
-                "session_id": session_id,
-                "cwd": cwd,
-                "updated": (entry.get("last_updated") or "")[:19],
-            })
+            found.append(_candidate(agent, name, session_id, entry, cwd))
     found.sort(key=lambda s: s["updated"], reverse=True)
     return found
 
@@ -952,18 +977,156 @@ def cmd_prefix_resume(args: argparse.Namespace) -> int:
         f'airesume → {chosen["agent"]} "{chosen["name"]}" [{where}]',
         file=sys.stderr,
     )
-    token = _resume_token(
-        chosen["agent"], chosen["name"], chosen["session_id"], chosen["cwd"]
-    )
-    if token is None:
+    return _emit_resume(chosen)
+
+
+_SEARCH_STOPWORDS = frozenset({
+    "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "at",
+    "for", "with", "where", "when", "was", "were", "is", "are", "we", "it",
+    "that", "this", "these", "those", "about", "discuss", "discussed",
+    "discussing", "conversation", "conversations", "chat", "session",
+    "sessions", "talk", "talking", "regarding", "from", "into", "our",
+    "you", "your", "had", "have", "been", "did", "do",
+})
+
+_SEARCH_PICK_LIMIT = 25
+
+
+def _query_terms(query: str) -> list[str]:
+    """Reduce a free-text query to its meaningful lowercase search terms.
+
+    Splits on non-alphanumeric runs, then drops stopwords and tokens shorter
+    than three characters, so 'the chat where we discussed slack hooks'
+    reduces to ['slack', 'hooks']. Order-preserving and de-duplicated.
+
+    Args:
+        query: The raw search string typed after `airesume -s`.
+
+    Returns:
+        The distinct keyword tokens, in first-seen order.
+    """
+    import re
+
+    words = re.findall(r"[a-z0-9]+", query.lower())
+    return [
+        word
+        for word in dict.fromkeys(words)
+        if len(word) >= 3 and word not in _SEARCH_STOPWORDS
+    ]
+
+
+def _score_metadata(terms: list[str], agents: tuple[str, ...]) -> list[dict]:
+    """Score sessions by how many `terms` appear in name + summary + cwd."""
+    scored: list[dict] = []
+    for agent in agents:
+        _set_current_agent(agent)
+        for name, entry in load_index().items():
+            session_id = entry.get("session_id") or ""
+            if not session_id:
+                continue
+            haystack = " ".join(
+                [name, entry.get("summary") or "", entry.get("cwd") or ""]
+            ).lower()
+            score = sum(1 for term in terms if term in haystack)
+            if not score:
+                continue
+            cwd, transcript = _resolve_resume_cwd(session_id, entry.get("cwd", ""))
+            if transcript is None:
+                continue
+            hit = _candidate(agent, name, session_id, entry, cwd)
+            hit["score"] = score
+            scored.append(hit)
+    return scored
+
+
+def _score_content(terms: list[str], agents: tuple[str, ...]) -> list[dict]:
+    """Score Claude sessions by how many `terms` appear in their transcripts.
+
+    Fallback used only when the metadata pass finds nothing. Codex and Gemini
+    transcripts are not scanned (`_search_transcripts` is Claude-only), so this
+    pass is skipped unless the claude registry is in scope.
+    """
+    if "claude" not in agents:
+        return []
+    _set_current_agent("claude")
+    term_hits: dict[str, int] = {}
+    for term in terms:
+        for session_id in _search_transcripts(term):
+            term_hits[session_id] = term_hits.get(session_id, 0) + 1
+    if not term_hits:
+        return []
+    scored: list[dict] = []
+    for name, entry in load_index().items():
+        session_id = entry.get("session_id") or ""
+        if session_id not in term_hits:
+            continue
+        cwd, transcript = _resolve_resume_cwd(session_id, entry.get("cwd", ""))
+        if transcript is None:
+            continue
+        hit = _candidate("claude", name, session_id, entry, cwd)
+        hit["score"] = term_hits[session_id]
+        scored.append(hit)
+    return scored
+
+
+def _search_candidates(terms: list[str], agents: tuple[str, ...]) -> list[dict]:
+    """Best-matching resumable sessions for `terms`, tied at the top score.
+
+    Tries a metadata pass (name/summary/cwd) first, falling back to a Claude
+    transcript-content pass. Returns the sessions tied at the highest
+    term-hit count, most-recent first, capped at `_SEARCH_PICK_LIMIT`.
+    """
+    scored = _score_metadata(terms, agents) or _score_content(terms, agents)
+    if not scored:
+        return []
+    top = max(hit["score"] for hit in scored)
+    winners = [hit for hit in scored if hit["score"] == top]
+    winners.sort(key=lambda hit: hit["updated"], reverse=True)
+    return winners[:_SEARCH_PICK_LIMIT]
+
+
+def cmd_search_resume(args: argparse.Namespace) -> int:
+    """Resolve a free-text query to one resumable session and emit it.
+
+    Scores sessions across every agent (or one, with `--agent`) by keyword
+    overlap. A sole top-scoring session resumes outright; a tie opens the
+    picker — the same flow as `prefix-resume`. Prints `<agent>\\t<cwd>\\t<token>`
+    on success.
+    """
+    agents = AGENTS if args.agent == "auto" else (args.agent,)
+    terms = _query_terms(args.query)
+    if not terms:
         print(
-            f'airesume: could not resolve a resume target for {chosen["agent"]} '
-            f'session "{chosen["name"]}".',
+            f"airesume: search query '{args.query}' has no usable keywords.",
             file=sys.stderr,
         )
         return 2
-    print(f"{chosen['agent']}\t{chosen['cwd']}\t{token}")
-    return 0
+    winners = _search_candidates(terms, agents)
+    if not winners:
+        print(
+            f"airesume: no session matching [{' '.join(terms)}] "
+            f"in {'/'.join(agents)}.",
+            file=sys.stderr,
+        )
+        return 2
+
+    if len(winners) == 1:
+        chosen: dict | None = winners[0]
+    else:
+        label = args.query if len(args.query) <= 50 else args.query[:47] + "..."
+        chosen = _pick_session(
+            winners, f'{len(winners)} sessions match "{label}":', True
+        )
+
+    if chosen is None:
+        print("airesume: cancelled.", file=sys.stderr)
+        return 3
+
+    print(
+        f'airesume → {chosen["agent"]} "{chosen["name"]}" [{chosen["cwd"]}]',
+        file=sys.stderr,
+    )
+    return _emit_resume(chosen)
 
 
 def cmd_move(args: argparse.Namespace) -> int:
@@ -1308,6 +1471,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--cwd", required=True, help="The calling shell's working directory ($PWD)."
     )
     p_prefix.set_defaults(func=cmd_prefix_resume)
+
+    p_search_resume = sub.add_parser(
+        "search-resume",
+        help="Resolve a free-text query to a resumable session (airesume -s)",
+        description="Score sessions across every agent (or one, with --agent) "
+        "by how many keywords from QUERY appear in their name, summary, and "
+        "cwd — falling back to a Claude transcript-content scan when metadata "
+        "matches nothing. The sessions tied at the top score are the result: "
+        "one resumes outright, several open the picker. Prints one "
+        "tab-separated line `<agent>\\t<cwd>\\t<token>` on success. Drives "
+        "`airesume -s`.",
+        epilog="Exit codes: 0 resume, 2 no match, 3 cancelled.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p_search_resume.add_argument(
+        "query", help="Free-text description of the session to resume."
+    )
+    p_search_resume.set_defaults(func=cmd_search_resume)
 
     p_move = sub.add_parser(
         "move",

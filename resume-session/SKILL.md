@@ -256,18 +256,25 @@ source "$HOME/.claude/skills/resume-session/shell/airesume.sh"
   - none in `$PWD`, a unique exact-name (or sole overall) match
     elsewhere → resume it, `cd`-ing into its folder;
   - none in `$PWD`, several elsewhere → picker with a folder column.
+- `airesume -s '<text>'` — resolve by *free-text description* instead of a
+  name-prefix. The query is reduced to keywords (stopwords and short tokens
+  dropped) and scored against each session's name, summary, and cwd; if
+  metadata matches nothing, the Claude transcript bodies are scanned. The
+  sessions tied at the top score are the result — one resumes outright,
+  several open the picker.
 - `airesume -c|-g|-x <prefix>` — restrict the scan to a single agent:
   `-c` claude, `-g` gemini, `-x` codex. The flag must be the first
-  argument. It maps to the registry script's global `--agent` flag.
+  argument. It maps to the registry script's global `--agent` flag, and
+  combines with `-s` (e.g. `airesume -c -s '...'`).
 - `airesume` (optionally with `-c|-g|-x`) — list recent named sessions.
 - `airesume -h` — usage summary.
 
-It is backed by the `prefix-resume` subcommand of `session_registry.py`,
-which prints `<agent>\t<cwd>\t<token>` (token = session UUID for claude,
-name for codex, resume index for gemini) and honours `--agent` to scan a
-single registry. Unlike the skill workflow, `airesume` is a shell
-function the user runs themselves, so resuming from inside a running
-session is not a concern.
+It is backed by the `prefix-resume` and `search-resume` subcommands of
+`session_registry.py`, which print `<agent>\t<cwd>\t<token>` (token =
+session UUID for claude, name for codex, resume index for gemini) and
+honour `--agent` to scan a single registry. Unlike the skill workflow,
+`airesume` is a shell function the user runs themselves, so resuming from
+inside a running session is not a concern.
 
 ## Safety
 
