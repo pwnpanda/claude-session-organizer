@@ -103,7 +103,9 @@ USAGE
       return 2
     fi
     subcmd="search-resume"
-    query_args=("$1")
+    # Join all remaining args so `-s grafana dashboard` works unquoted,
+    # while a single quoted `-s 'grafana dashboard'` still passes through.
+    query_args=("$*")
   else
     query_args=("$1" --cwd "$PWD")
   fi
