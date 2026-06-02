@@ -4,6 +4,8 @@ argument-hint: <session-name>
 allowed-tools: Bash
 ---
 
+<!-- DUPLICATE OF rn.md (same body, different command name). If you edit this file, edit rn.md too. Both call session_registry.py directly because slash commands embedded in command bodies do not re-invoke other slash commands. -->
+
 Register the current Claude Code session under the name `$ARGUMENTS` by running:
 
 `python3 "$HOME/.claude/skills/resume-session/scripts/session_registry.py" register-current "$ARGUMENTS" --cwd "$(pwd)"`

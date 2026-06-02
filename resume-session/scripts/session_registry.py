@@ -1586,7 +1586,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Register the running session by cwd",
         description="Look up the currently-running Claude Code session by cwd "
         "(reading ~/.claude/sessions/<pid>.json) and register it under a name. "
-        "Used by the /save slash command so the user doesn't have to type the "
+        "Used by the /register and /rn slash commands so the user doesn't have to type the "
         "session UUID.",
     )
     p_cur.add_argument("name")

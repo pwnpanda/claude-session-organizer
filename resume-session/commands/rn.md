@@ -1,8 +1,10 @@
 ---
-description: Alias for /save. Register the current session under a short human-friendly name.
+description: Register the current session under a short human-friendly name so it can be resumed later by name.
 argument-hint: <session-name>
 allowed-tools: Bash
 ---
+
+<!-- DUPLICATE OF register.md (same body, different command name). If you edit this file, edit register.md too. Both call session_registry.py directly because slash commands embedded in command bodies do not re-invoke other slash commands. -->
 
 Register the current Claude Code session under the name `$ARGUMENTS` by running:
 

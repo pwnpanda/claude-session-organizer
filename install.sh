@@ -4,7 +4,7 @@
 # - Symlinks ~/.claude/skills/conversation-summary -> <repo>/conversation-summary
 # - Symlinks ~/.claude/skills/load-context         -> <repo>/load-context
 # - Symlinks ~/.claude/skills/resume-session       -> <repo>/resume-session
-# - Symlinks ~/.claude/commands/save.md            -> <repo>/resume-session/commands/save.md
+# - Symlinks ~/.claude/commands/register.md        -> <repo>/resume-session/commands/register.md
 # - Symlinks ~/.claude/commands/rn.md              -> <repo>/resume-session/commands/rn.md
 # - Idempotently merges hooks into ~/.claude/settings.json:
 #     SessionEnd       -> conversation-summary/scripts/write_summary.sh
@@ -65,7 +65,7 @@ echo "Installing symlinks..."
 link_target "${SKILLS_DIR}/conversation-summary" "${REPO}/conversation-summary"
 link_target "${SKILLS_DIR}/load-context"         "${REPO}/load-context"
 link_target "${SKILLS_DIR}/resume-session"       "${REPO}/resume-session"
-link_target "${CLAUDE_DIR}/commands/save.md"     "${REPO}/resume-session/commands/save.md"
+link_target "${CLAUDE_DIR}/commands/register.md" "${REPO}/resume-session/commands/register.md"
 link_target "${CLAUDE_DIR}/commands/rn.md"       "${REPO}/resume-session/commands/rn.md"
 
 echo "Merging hooks into ${SETTINGS}..."
@@ -209,5 +209,5 @@ echo
 echo "Round-trip:"
 echo "  - SessionEnd writes .context-handoff.json (at git repo root if available, else cwd)"
 echo "  - To load it in a new session, ask Claude to /load-context (manual only)"
-echo "  - /save my-session registers the current session under a human-friendly name"
+echo "  - /register my-session (or /rn) registers the current session under a human-friendly name"
 echo "  - /rn my-session does the same with a shorter alias"

@@ -58,8 +58,11 @@ fall back to one of these:
    current session — it will call
    `session_registry.py register <name> --session-id <id> --cwd <cwd>`.
 2. **Custom slash command:** add a project or user slash command (e.g.
-   `/save` or `/rn`) whose body calls the registry script directly.
-   This bypasses the built-in handler.
+   `/register` or `/rn`) whose body calls the registry script directly.
+   This bypasses the built-in handler. Avoid naming a custom command
+   `/save` — Claude Code intercepts it as `/rename` (a built-in that
+   sets the session display name and triggers the UserPromptSubmit
+   hook), and the custom command body never runs.
 
 ## Verifying the hooks
 

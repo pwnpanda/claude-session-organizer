@@ -192,11 +192,12 @@ Manually-named entries are never pruned.
 Two hooks in `scripts/` maintain the registry without user action:
 
 - `rename_hook.py` — `UserPromptSubmit` — captures `/rename <name>`
-  and registers the session. Note: the built-in `/rename` slash
-  command is intercepted by Claude Code before this hook fires, so in
-  practice this path rarely triggers on current versions — use
-  `/save` (see `commands/save.md`) or rely on the auto-register
-  fallback below.
+  and registers the session. The hook does fire on recent Claude Code
+  versions because the harness re-emits the prompt text as
+  `/rename <name>` after its built-in handler runs, including when the
+  user typed `/save <name>` (the harness rewrites `/save` to `/rename`).
+  For an explicit, single-purpose registration command, use
+  `/register` (see `commands/register.md`) or its alias `/rn`.
 - `session_end_hook.py` — `SessionEnd` — on quit (Ctrl+C x2 or
   `/exit`):
   1. If the session is already registered, refresh `last_updated`
@@ -204,7 +205,7 @@ Two hooks in `scripts/` maintain the registry without user action:
   2. Otherwise, auto-register it under a slug derived from the first
      user prompt (falling back to `session-<shortid>` if the prompt
      is empty or only slash-commands). This guarantees every session
-     ends up in the registry even if the user never ran `/save`.
+     ends up in the registry even if the user never ran `/register` or `/rn`.
 
 **First-time setup:** read `references/setup.md` and add the hook
 entries to `~/.claude/settings.json`. Offer to do this for the user

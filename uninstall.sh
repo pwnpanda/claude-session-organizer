@@ -2,7 +2,7 @@
 # Uninstall the three session skills from ~/.claude.
 #
 # - Removes symlinks at ~/.claude/skills/{conversation-summary,load-context,resume-session}
-#   and ~/.claude/commands/save.md if they still point at this repo.
+#   and ~/.claude/commands/{register.md,rn.md} if they still point at this repo.
 # - Removes the SessionEnd, SessionStart, and UserPromptSubmit hook entries
 #   added by this repo's install.sh from ~/.claude/settings.json.
 #
@@ -41,7 +41,8 @@ echo "Removing symlinks..."
 remove_link_if_ours "${SKILLS_DIR}/conversation-summary" "${REPO}/conversation-summary"
 remove_link_if_ours "${SKILLS_DIR}/load-context"         "${REPO}/load-context"
 remove_link_if_ours "${SKILLS_DIR}/resume-session"       "${REPO}/resume-session"
-remove_link_if_ours "${CLAUDE_DIR}/commands/save.md"     "${REPO}/resume-session/commands/save.md"
+remove_link_if_ours "${CLAUDE_DIR}/commands/register.md" "${REPO}/resume-session/commands/register.md"
+remove_link_if_ours "${CLAUDE_DIR}/commands/rn.md"       "${REPO}/resume-session/commands/rn.md"
 
 if [[ -f "${SETTINGS}" ]]; then
   echo "Removing hooks from ${SETTINGS}..."

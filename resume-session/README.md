@@ -5,8 +5,12 @@ human-friendly name instead of hunting for UUIDs.
 
 Provides:
 
-- The `/save <session-name>` slash command.
-- The `/rn <session-name>` alias for `/save`.
+- The `/register <session-name>` slash command.
+- The `/rn <session-name>` shorter alias for `/register`.
+- A passive `/save <session-name>` path: Claude Code rewrites `/save` to its
+  built-in `/rename`, which fires the `UserPromptSubmit` hook below and
+  registers the session by name. (Don't ship a user-defined `/save` command —
+  the built-in wins.)
 - The `resume-session` skill (Claude knows when to invoke it from
   phrases like "resume foo" or "list my sessions").
 - Two Claude Code hooks that keep the Claude registry fresh automatically:
@@ -35,7 +39,7 @@ cd ~/git/priv/session-organizer  # or wherever you cloned it
 The installer:
 
 1. Symlinks `~/.claude/skills/resume-session` -> this repo.
-2. Symlinks `~/.claude/commands/save.md` -> `commands/save.md` here.
+2. Symlinks `~/.claude/commands/register.md` -> `commands/register.md` here.
 3. Symlinks `~/.claude/commands/rn.md` -> `commands/rn.md` here.
 4. Merges the two hooks into `~/.claude/settings.json` (idempotent —
    safe to re-run).
@@ -46,8 +50,10 @@ Restart Claude Code afterwards so the new hook config takes effect.
 
 In any Claude Code session:
 
-- `/save my-session` — register the current session under a name.
-- `/rn my-session` — same as `/save`, shorter to type.
+- `/register my-session` — register the current session under a name.
+- `/rn my-session` — same as `/register`, shorter to type.
+- `/save my-session` — also works passively (built-in `/rename` + hook),
+  but it sets the session display name too. Use `/rn` for pure registration.
 - "Resume my-session" — the skill looks up the entry and prints the
   matching `cd <cwd> && <agent resume command>`.
 - "List my sessions" — Claude shows the registry sorted newest-first.
@@ -117,8 +123,8 @@ session-organizer/
 ├── uninstall.sh
 ├── SKILL.md             # the resume-session skill body
 ├── commands/
-│   ├── save.md          # the /save slash command
-│   └── rn.md            # the /rn alias
+│   ├── register.md      # the /register slash command
+│   └── rn.md            # the /rn alias (self-contained)
 ├── scripts/
 │   ├── session_registry.py
 │   ├── rename_hook.py

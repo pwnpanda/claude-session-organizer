@@ -6,7 +6,7 @@ Three paired Claude Code skills + hooks that organize and round-trip session con
 
 - **`conversation-summary`** — at session end, a `SessionEnd` hook spawns a headless `claude --print --bare` child that reads the transcript and writes `.context-handoff.json` at the **git repo root** of the cwd (falling back to cwd if not in a repo). The summary is a structured `context-handoff-merged-v3` snapshot. When the file lands inside a clean git repo (no rebase/merge in progress, not detached HEAD, not gitignored), the hook also **auto-commits** it on the current branch as `chore: update claude session handoff` so the handoff travels with the project across machines via your normal `git push` / `git pull`. To opt out per-repo, add `.context-handoff.json` to that repo's `.gitignore`.
 - **`load-context`** — in a new session, invoke `/load-context` (or say "load context", "load the handoff", etc.). The skill reads `.context-handoff.json` from the git repo root (falling back to cwd), validates the schema, orients to the prior state, and waits for the user's next instruction. Loading is **always explicit** — there is no auto-load on session start.
-- **`resume-session`** — a name registry mapping human-friendly names (e.g. `my-feature-work`) to Claude Code session IDs so prior conversations can be resumed by name instead of UUID. A `UserPromptSubmit` hook catches `/save <name>`, a `SessionEnd` hook auto-registers any session that wasn't manually named, and `cc-resume <name>` (optional shell wrapper) prints/runs the exact `cd ... && claude --resume <id>` command. Subprocess Claude invocations that set `CLAUDE_NO_AUTO_REGISTER=1` in their env are skipped so pipeline workers don't pollute the registry.
+- **`resume-session`** — a name registry mapping human-friendly names (e.g. `my-feature-work`) to Claude Code session IDs so prior conversations can be resumed by name instead of UUID. The user-defined `/register` (and `/rn` alias) slash commands call the registration script directly; a `UserPromptSubmit` hook also catches `/rename <name>` (which Claude Code's built-in `/save` rewrites to), giving a passive registration path. A `SessionEnd` hook auto-registers any session that wasn't manually named, and `cc-resume <name>` (optional shell wrapper) prints/runs the exact `cd ... && claude --resume <id>` command. Subprocess Claude invocations that set `CLAUDE_NO_AUTO_REGISTER=1` in their env are skipped so pipeline workers don't pollute the registry.
 
 ## Use cases
 
@@ -34,7 +34,7 @@ cd ~/git/priv/claude-session-organizer
 `install.sh` is idempotent. It:
 
 - Symlinks `~/.claude/skills/{conversation-summary,load-context,resume-session}` → the corresponding subdirectories in this repo.
-- Symlinks `~/.claude/commands/save.md` → `<repo>/resume-session/commands/save.md`.
+- Symlinks `~/.claude/commands/register.md` → `<repo>/resume-session/commands/register.md` and `~/.claude/commands/rn.md` → `<repo>/resume-session/commands/rn.md`.
 - Merges three hooks into `~/.claude/settings.json`: `SessionEnd` → `write_summary.sh`, `SessionEnd` → `session_end_hook.py`, `UserPromptSubmit` → `rename_hook.py`. Existing hooks are preserved.
 - Purges any legacy `SessionStart` auto-load entry left over from older versions.
 
@@ -67,7 +67,9 @@ Removes the symlinks (only if they still point at this repo) and removes the hoo
 ### Save & resume a session by name
 
 ```text
-/save my-feature-work        # in a Claude Code session, registers it by name
+/register my-feature-work    # in a Claude Code session, registers it by name
+# (or /rn my-feature-work — short alias)
+# /save also works passively: built-in /rename + UserPromptSubmit hook.
 ```
 
 Later, from any shell:
@@ -122,7 +124,7 @@ No automated tests — these are small shell + Python scripts wired to Claude Co
 
 - **Writer pipe test:** feed a synthetic SessionEnd payload to `write_summary.sh` with a stub `claude` binary; check that `.context-handoff.json` lands at the git repo root and is valid JSON.
 - **End-to-end handoff:** run a real session, exit, restart in the same repo, `/load-context`, verify it reads and acknowledges.
-- **Registry:** `/save name`, exit, `python3 session_registry.py resume-cmd name` from a fresh shell.
+- **Registry:** `/rn name` (or `/register name`), exit, `python3 session_registry.py resume-cmd name` from a fresh shell.
 
 `shellcheck` runs cleanly on every script. Run it before committing:
 
@@ -142,11 +144,12 @@ shellcheck conversation-summary/scripts/*.sh install.sh uninstall.sh resume-sess
 ├── resume-session/                   # name registry + slash commands + shell wrapper
 │   ├── SKILL.md
 │   ├── README.md
-│   ├── commands/save.md              # /save slash command
+│   ├── commands/register.md          # /register slash command
+│   ├── commands/rn.md                # /rn alias (self-contained)
 │   ├── scripts/
 │   │   ├── session_registry.py       # registry CLI (resume-cmd, search, list, …)
 │   │   ├── session_end_hook.py       # SessionEnd hook (registers / touches)
-│   │   └── rename_hook.py            # UserPromptSubmit hook (/save <name>)
+│   │   └── rename_hook.py            # UserPromptSubmit hook (/rename <name>; also catches /save via built-in rewrite)
 │   ├── shell/cc-resume.sh            # optional shell wrapper
 │   └── references/setup.md
 ├── install.sh
