@@ -3,7 +3,7 @@
 
 Persists mappings from human-friendly names to agent session metadata.
 Claude keeps the original registry path for backward compatibility. Codex
-also updates its native thread title database so `codex resume <name>` works.
+also updates its native thread title database for display in Codex clients.
 
 Storage:
   Claude: ~/.claude/session-names/index.json
@@ -750,7 +750,7 @@ def cmd_resume_cmd(args: argparse.Namespace) -> int:
         )
         return 1
     if CURRENT_AGENT == "codex":
-        print(f"cd {cwd!s} && codex resume {args.name}")
+        print(f"cd {cwd!s} && codex resume {sid}")
     elif CURRENT_AGENT == "gemini":
         resume_index = _gemini_resume_index(sid, cwd)
         if resume_index is None:
@@ -765,14 +765,12 @@ def cmd_resume_cmd(args: argparse.Namespace) -> int:
     return 0
 
 
-def _resume_token(agent: str, name: str, session_id: str, cwd: str) -> str | None:
+def _resume_token(agent: str, session_id: str, cwd: str) -> str | None:
     """Return the agent-native identifier to hand to its resume command.
 
-    Codex resumes by registered name, Gemini by a per-project resume index,
-    Claude by session UUID. Returns None when the identifier can't be resolved.
+    Codex and Claude resume by session UUID. Gemini resumes by a per-project
+    index. Returns None when the identifier can't be resolved.
     """
-    if agent == "codex":
-        return name
     if agent == "gemini":
         index = _gemini_resume_index(session_id, cwd)
         return str(index) if index is not None else None
@@ -796,12 +794,10 @@ def _emit_resume(chosen: dict) -> int:
     Writes `<agent>\\t<cwd>\\t<token>` to stdout and returns 0, or an error to
     stderr and returns 2 when the agent-native resume token can't be resolved.
     """
-    token = _resume_token(
-        chosen["agent"], chosen["name"], chosen["session_id"], chosen["cwd"]
-    )
+    token = _resume_token(chosen["agent"], chosen["session_id"], chosen["cwd"])
     if token is None:
         print(
-            f'airesume: could not resolve a resume target for {chosen["agent"]} '
+            f"airesume: could not resolve a resume target for {chosen['agent']} "
             f'session "{chosen["name"]}".',
             file=sys.stderr,
         )

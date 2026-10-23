@@ -26,8 +26,9 @@ Registry data is per-agent, per-machine runtime state:
 - Codex: `~/.codex/session-names/index.json`
 - Gemini: `~/.gemini/session-names/index.json`
 
-Codex registrations also update `~/.codex/state_5.sqlite` so
-`codex resume <name>` works with the native Codex resume command.
+Codex registrations also update the native SQLite thread title for display.
+Resume commands use the stable Codex session UUID, so they do not depend on
+the native name-index implementation.
 
 ## Install
 

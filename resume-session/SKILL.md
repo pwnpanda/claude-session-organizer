@@ -17,9 +17,9 @@ in one per-agent index:
 - Gemini: `~/.gemini/session-names/index.json`
 
 Two Claude hooks (see `references/setup.md`) keep the Claude registry up
-to date automatically on `/rename` and on session exit. Codex entries
-also update Codex's native SQLite thread title so `codex resume <name>`
-works.
+to date automatically on `/rename` and on session exit. Codex entries also
+update Codex's native SQLite thread title for display, while resume commands
+use the stable session UUID.
 
 ## When to trigger
 
